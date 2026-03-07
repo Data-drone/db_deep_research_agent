@@ -12,11 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
-    """Generate final output from compressed findings."""
+    """Generate final output from compressed findings, streaming tokens when possible."""
     findings = state.get("compressed_findings")
     evidence = state.get("evidence", [])
     output_mode = state.get("output_mode", "chat")
     query = state.get("clarified_query") or state["user_query"]
+
+    # Job context for token streaming (injected by _run_graph)
+    job_manager = state.get("_job_manager")
+    job_id = state.get("_job_id")
 
     system_prompt = (
         SYNTHESIZER_REPORT_SYSTEM if output_mode == "report"
@@ -40,9 +44,22 @@ async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
         for e in evidence:
             context_parts.append(f"- [{e.source_id}] {e.snippet}")
 
-    response = await model.ainvoke([
+    messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": "\n".join(context_parts)},
-    ])
+    ]
 
-    return {"final_output": response.content}
+    # Try streaming for token-level output
+    if job_manager and job_id and hasattr(model, "astream"):
+        chunks = []
+        async for chunk in model.astream(messages):
+            token = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if token:
+                chunks.append(token)
+                job_manager.push_event(job_id, {"type": "token", "content": token})
+        final_output = "".join(chunks)
+    else:
+        response = await model.ainvoke(messages)
+        final_output = response.content
+
+    return {"final_output": final_output}

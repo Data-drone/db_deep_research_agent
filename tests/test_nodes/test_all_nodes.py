@@ -313,6 +313,47 @@ async def test_synthesizer_report_mode():
     assert "Executive Summary" in result["final_output"]
 
 
+@pytest.mark.asyncio
+async def test_synthesizer_streams_tokens():
+    """Synthesizer pushes token events to job_manager when available."""
+    from deep_research.api.jobs import JobManager
+
+    jm = JobManager()
+    job_id = jm.create_job(query="test", tools=[])
+
+    # Mock model with astream that yields chunks
+    class _StreamingModel:
+        async def astream(self, messages):
+            for word in ["Hello", " world", "!"]:
+                chunk = MagicMock()
+                chunk.content = word
+                yield chunk
+
+        async def ainvoke(self, messages):
+            resp = MagicMock()
+            resp.content = "Hello world!"
+            return resp
+
+    model = _StreamingModel()
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["_job_manager"] = jm
+    state["_job_id"] = job_id
+
+    result = await synthesizer_node(state, model=model)
+    assert result["final_output"] == "Hello world!"
+
+    # Check token events were pushed
+    queue = jm.get_event_queue(job_id)
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    token_events = [e for e in events if e["type"] == "token"]
+    assert len(token_events) == 3
+    assert token_events[0]["content"] == "Hello"
+    assert token_events[1]["content"] == " world"
+    assert token_events[2]["content"] == "!"
+
+
 # --- Verifier ---
 
 @pytest.mark.asyncio
