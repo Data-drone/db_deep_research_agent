@@ -240,6 +240,43 @@ async def test_job_event_queue_unknown_job():
         jm.get_event_queue("nonexistent")
 
 
+async def test_sse_stream_endpoint(graph_client):
+    """SSE endpoint streams node events then completes."""
+    # Submit a job
+    response = await graph_client.post("/api/research", json={
+        "query": "Test SSE",
+        "tools": [],
+        "output_mode": "chat",
+    })
+    job_id = response.json()["job_id"]
+
+    # Let background task complete
+    await asyncio.sleep(0.2)
+
+    # Read SSE stream
+    response = await graph_client.get(
+        f"/api/research/{job_id}/stream",
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+    # Parse SSE events from response body
+    lines = response.text.strip().split("\n")
+    data_lines = [l.removeprefix("data: ") for l in lines if l.startswith("data: ")]
+    assert len(data_lines) >= 1  # at least the completed event
+
+    import json as _json
+    last_event = _json.loads(data_lines[-1])
+    assert last_event["type"] in ("completed", "failed")
+
+
+async def test_sse_stream_unknown_job(client):
+    """SSE stream for unknown job returns 404."""
+    response = await client.get("/api/research/nonexistent/stream")
+    assert response.status_code == 404
+
+
 async def test_run_graph_pushes_events():
     """_run_graph pushes node_started events and a completed event to the queue."""
     jm = JobManager()

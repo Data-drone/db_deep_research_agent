@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any, Literal
@@ -10,6 +11,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from deep_research.api.jobs import JobManager, JobStatus
 from deep_research.state import create_initial_state
@@ -156,6 +158,45 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             "current_node": status.current_node,
             "error": status.error,
         }
+
+    @app.get("/api/research/{job_id}/stream")
+    async def stream_research(job_id: str):
+        try:
+            job_manager.get_status(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        async def event_generator():
+            # Check terminal state FIRST (handles late-connect case)
+            status = job_manager.get_status(job_id)
+            if status.state in ("completed", "failed", "cancelled"):
+                yield f"data: {json.dumps({'type': status.state, 'result': status.result, 'error': status.error})}\n\n"
+                return
+
+            queue = job_manager.get_event_queue(job_id)
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") in ("completed", "failed", "cancelled"):
+                        break
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield ": keepalive\n\n"
+                    # Check if job terminated externally
+                    status = job_manager.get_status(job_id)
+                    if status.state in ("completed", "failed", "cancelled"):
+                        yield f"data: {json.dumps({'type': status.state, 'result': status.result, 'error': status.error})}\n\n"
+                        break
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache",
+            },
+        )
 
     @app.delete("/api/research/{job_id}")
     async def cancel_research(job_id: str):
