@@ -1,0 +1,17 @@
+managed_servers:
+  genie_sales:
+    url: "https://test.databricks.net/api/2.0/mcp/genie/space-123"
+    display_name: "Sales Data (Genie)"
+    enabled: true
+    risk_tier: "safe"
+    capability: "read"
+    description: "Query sales data via Genie"
+  vector_search_kb:
+    url: "https://test.databricks.net/api/2.0/mcp/vector-search/index-456"
+    display_name: "Knowledge Base"
+    enabled: true
+    risk_tier: "safe"
+    capability: "read"
+    description: "Search internal knowledge base"
+
+custom_servers: {}
