@@ -1,6 +1,8 @@
 """API-level integration tests — tests from the user's HTTP perspective."""
 
+import asyncio
 import pytest
+from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 
 from deep_research.api.app import create_app
@@ -8,8 +10,14 @@ from deep_research.api.app import create_app
 
 @pytest.fixture
 def app():
-    """Create app with mock dependencies."""
-    return create_app(use_mocks=True)
+    """Create app with mock dependencies and a mock graph."""
+    a = create_app(use_mocks=True)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"final_output": "Mock research result"}
+    a.state.graph = mock_graph
+    a.state.mcp_manager = None
+    a.state.config = None
+    return a
 
 
 @pytest.fixture
@@ -49,13 +57,25 @@ class TestUserResearchFlow:
         )
         job_id = submit.json()["job_id"]
 
+        # Let background task complete
+        await asyncio.sleep(0.1)
+
         result = await client.get(f"/api/research/{job_id}")
         assert result.status_code == 200
         data = result.json()
-        assert data["status"] in ("pending", "running", "completed")
+        assert data["status"] == "completed"
+        assert data["result"] == "Mock research result"
 
     async def test_cancel_research(self, client):
         """User cancels an in-progress research query."""
+        # Use a slow graph so we can cancel before completion
+        app = client._transport.app  # type: ignore[attr-defined]
+        hang_event = asyncio.Event()
+        async def slow_invoke(state):
+            await hang_event.wait()
+            return {"final_output": "done"}
+        app.state.graph.ainvoke = slow_invoke
+
         submit = await client.post(
             "/api/research",
             json={
@@ -71,6 +91,7 @@ class TestUserResearchFlow:
 
         status = await client.get(f"/api/research/{job_id}")
         assert status.json()["status"] == "cancelled"
+        hang_event.set()  # Clean up
 
     async def test_submit_feedback(self, client):
         """User submits thumbs up/down on a response."""
