@@ -14,6 +14,7 @@ AI-powered deep research agent built on Databricks. Connects to enterprise data 
 ## Docs
 
 - [Design Document](docs/plans/2026-03-07-deep-research-bot-design.md) — architecture, agent flow, MCP configuration, feedback system
+- [Implementation Plan](docs/plans/2026-03-07-deep-research-bot-implementation.md) — phased build plan with testing strategy
 
 ## Setup
 
