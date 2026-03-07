@@ -17,7 +17,8 @@ class _MockGraph:
         return {"final_output": self._final_output}
 
     async def astream(self, state, stream_mode="updates"):
-        yield {"verifier": {"final_output": self._final_output}}
+        yield {"synthesizer": {"final_output": self._final_output}}
+        yield {"verifier": {"verification_result": None}}
 
 
 @pytest.fixture
@@ -85,7 +86,8 @@ class TestUserResearchFlow:
         class _SlowGraph:
             async def astream(self, state, stream_mode="updates"):
                 await hang_event.wait()
-                yield {"verifier": {"final_output": "done"}}
+                yield {"synthesizer": {"final_output": "done"}}
+                yield {"verifier": {"verification_result": None}}
 
         app.state.graph = _SlowGraph()
 

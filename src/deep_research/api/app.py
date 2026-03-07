@@ -43,7 +43,7 @@ async def _run_graph(
 
         # Try streaming for node-level progress tracking
         if hasattr(graph, "astream"):
-            final_state = None
+            accumulated_state: dict = {}
             async for event in graph.astream(initial_state, stream_mode="updates"):
                 for node_name in event:
                     logger.info(f"Job {job_id}: completed node '{node_name}'")
@@ -51,11 +51,12 @@ async def _run_graph(
                         job_id, "running", current_node=node_name
                     )
                     job_manager.push_event(job_id, {"type": "node_started", "node": node_name})
-                    final_state = event[node_name]
+                    # Merge each node's partial update into accumulated state
+                    node_output = event[node_name]
+                    if isinstance(node_output, dict):
+                        accumulated_state.update(node_output)
 
-            final_output = ""
-            if final_state and isinstance(final_state, dict):
-                final_output = final_state.get("final_output", "")
+            final_output = accumulated_state.get("final_output", "")
             if not final_output:
                 final_output = "Research completed but produced no output."
         else:

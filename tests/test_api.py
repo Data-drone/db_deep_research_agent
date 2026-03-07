@@ -31,7 +31,8 @@ class _MockGraph:
         return {"final_output": self._final_output}
 
     async def astream(self, state, stream_mode="updates"):
-        yield {"verifier": {"final_output": self._final_output}}
+        yield {"synthesizer": {"final_output": self._final_output}}
+        yield {"verifier": {"verification_result": None}}
 
 
 @pytest.fixture
@@ -147,7 +148,8 @@ async def test_cancel_research(graph_client):
     class _SlowGraph:
         async def astream(self, state, stream_mode="updates"):
             await hang_event.wait()
-            yield {"verifier": {"final_output": "done"}}
+            yield {"synthesizer": {"final_output": "done"}}
+            yield {"verifier": {"verification_result": None}}
 
     app.state.graph = _SlowGraph()
 
@@ -286,7 +288,8 @@ async def test_run_graph_pushes_events():
         async def astream(self, state, stream_mode="updates"):
             yield {"clarifier": {"clarified_query": "test"}}
             yield {"planner": {"research_plan": []}}
-            yield {"verifier": {"final_output": "done"}}
+            yield {"synthesizer": {"final_output": "done"}}
+            yield {"verifier": {"verification_result": None}}
 
     await _run_graph(_MultiNodeGraph(), jm, job_id, {})
 
@@ -296,10 +299,11 @@ async def test_run_graph_pushes_events():
         events.append(queue.get_nowait())
 
     node_events = [e for e in events if e["type"] == "node_started"]
-    assert len(node_events) == 3
+    assert len(node_events) == 4
     assert node_events[0]["node"] == "clarifier"
     assert node_events[1]["node"] == "planner"
-    assert node_events[2]["node"] == "verifier"
+    assert node_events[2]["node"] == "synthesizer"
+    assert node_events[3]["node"] == "verifier"
 
     terminal = [e for e in events if e["type"] in ("completed", "failed")]
     assert len(terminal) == 1
