@@ -1,3 +1,6 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
 import type { Message } from "../types";
 
 interface Props {
@@ -14,10 +17,14 @@ export function MessageBubble({ message, onRate }: Props) {
         {isUser ? (
           <p>{message.content}</p>
         ) : (
-          <div
-            className="markdown-content"
-            dangerouslySetInnerHTML={{ __html: formatContent(message.content) }}
-          />
+          <div className="markdown-content">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeSanitize]}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
         )}
       </div>
       {!isUser && (
@@ -25,6 +32,7 @@ export function MessageBubble({ message, onRate }: Props) {
           <button
             className={`rate-btn ${message.rating === "thumbs_up" ? "active" : ""}`}
             onClick={() => onRate(message.id, "thumbs_up")}
+            aria-label="Rate response as helpful"
             title="Helpful"
           >
             👍
@@ -32,6 +40,7 @@ export function MessageBubble({ message, onRate }: Props) {
           <button
             className={`rate-btn ${message.rating === "thumbs_down" ? "active" : ""}`}
             onClick={() => onRate(message.id, "thumbs_down")}
+            aria-label="Rate response as not helpful"
             title="Not helpful"
           >
             👎
@@ -40,13 +49,4 @@ export function MessageBubble({ message, onRate }: Props) {
       )}
     </div>
   );
-}
-
-function formatContent(content: string): string {
-  return content
-    .replace(/^## (.+)$/gm, "<h3>$1</h3>")
-    .replace(/^### (.+)$/gm, "<h4>$1</h4>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[Source: (.+?)\]/g, '<span class="citation">[Source: $1]</span>')
-    .replace(/\n/g, "<br />");
 }

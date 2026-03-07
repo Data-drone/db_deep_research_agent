@@ -10,12 +10,48 @@
   padding: 12px 24px;
   border-bottom: 1px solid #2d2d44;
   background: #16213e;
+  display: flex;
+  align-items: center;
+  gap: 24px;
 }
 
 .app-header h1 {
   margin: 0;
   font-size: 1.2rem;
   color: #fff;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  padding: 6px 14px;
+  border: 1px solid #3d3d5c;
+  border-radius: 6px;
+  background: transparent;
+  color: #8892b0;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.tab.active {
+  background: #0a3d62;
+  border-color: #64b5f6;
+  color: #fff;
+}
+
+.tab:hover:not(.active) {
+  border-color: #64b5f6;
+}
+
+.error-banner {
+  padding: 10px 24px;
+  background: #5c0a0a;
+  color: #ef9a9a;
+  font-size: 0.9rem;
+  border-bottom: 1px solid #8b0000;
 }
 
 .app-body {

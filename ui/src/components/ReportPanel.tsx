@@ -1,4 +1,7 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
 
 interface Props {
   content: string;
@@ -20,10 +23,14 @@ export function ReportPanel({ content }: Props) {
   if (sections.length === 0) {
     return (
       <div className="report-panel">
-        <div
-          className="report-body"
-          dangerouslySetInnerHTML={{ __html: formatMarkdown(content) }}
-        />
+        <div className="report-body">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeSanitize]}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
       </div>
     );
   }
@@ -35,17 +42,23 @@ export function ReportPanel({ content }: Props) {
           <button
             className="section-header"
             onClick={() => toggleSection(idx)}
+            aria-expanded={!collapsed[idx]}
+            aria-controls={`section-body-${idx}`}
           >
             <span className="collapse-icon">
-              {collapsed[idx] ? "▶" : "▼"}
+              {collapsed[idx] ? "\u25B6" : "\u25BC"}
             </span>
             {section.title}
           </button>
           {!collapsed[idx] && (
-            <div
-              className="section-body"
-              dangerouslySetInnerHTML={{ __html: formatMarkdown(section.body) }}
-            />
+            <div className="section-body" id={`section-body-${idx}`}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeSanitize]}
+              >
+                {section.body}
+              </ReactMarkdown>
+            </div>
           )}
         </div>
       ))}
@@ -76,13 +89,4 @@ function parseSections(content: string): Section[] {
   }
 
   return sections;
-}
-
-function formatMarkdown(text: string): string {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[Source: (.+?)\]/g, '<span class="citation">[Source: $1]</span>')
-    .replace(/^- (.+)$/gm, "<li>$1</li>")
-    .replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>")
-    .replace(/\n/g, "<br />");
 }

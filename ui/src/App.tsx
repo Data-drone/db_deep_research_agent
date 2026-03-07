@@ -7,20 +7,37 @@ import type { OutputMode } from "./types";
 import "./App.css";
 
 function App() {
-  const { messages, currentJob, isLoading, send, cancel, rate } =
+  const { messages, currentJob, isLoading, error, send, cancel, rate } =
     useResearch();
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [outputMode, setOutputMode] = useState<OutputMode>("chat");
+  const [viewMode, setViewMode] = useState<"chat" | "report">("chat");
 
   const lastAssistantMsg = [...messages]
     .reverse()
     .find((m) => m.role === "assistant");
-  const showReport = outputMode === "report" && lastAssistantMsg;
+  const hasReport = outputMode === "report" && lastAssistantMsg;
 
   return (
     <div className="app">
       <header className="app-header">
         <h1>Deep Research Agent</h1>
+        {hasReport && (
+          <div className="view-tabs">
+            <button
+              className={`tab ${viewMode === "chat" ? "active" : ""}`}
+              onClick={() => setViewMode("chat")}
+            >
+              Conversation
+            </button>
+            <button
+              className={`tab ${viewMode === "report" ? "active" : ""}`}
+              onClick={() => setViewMode("report")}
+            >
+              Report
+            </button>
+          </div>
+        )}
       </header>
       <div className="app-body">
         <aside className="sidebar">
@@ -32,7 +49,12 @@ function App() {
           />
         </aside>
         <main className="main-content">
-          {showReport ? (
+          {error && (
+            <div className="error-banner" role="alert">
+              {error}
+            </div>
+          )}
+          {hasReport && viewMode === "report" ? (
             <ReportPanel content={lastAssistantMsg.content} />
           ) : (
             <ChatPanel

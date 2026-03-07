@@ -43,17 +43,31 @@ export function ProgressBar({ job, onCancel }: Props) {
     currentIdx >= 0 ? ((currentIdx + 1) / NODE_ORDER.length) * 100 : 10;
 
   return (
-    <div className="progress-bar-container">
+    <div className="progress-bar-container" aria-busy="true">
       <div className="progress-header">
-        <span className="progress-label">{label}</span>
-        <button className="cancel-btn" onClick={onCancel} title="Cancel">
+        <span className="progress-label" role="status" aria-live="polite">
+          {label}
+        </span>
+        <button
+          className="cancel-btn"
+          onClick={onCancel}
+          aria-label="Cancel research"
+          title="Cancel"
+        >
           ✕
         </button>
       </div>
-      <div className="progress-track">
+      <div
+        className="progress-track"
+        role="progressbar"
+        aria-valuenow={Math.round(progress)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`Research progress: ${label}`}
+      >
         <div className="progress-fill" style={{ width: `${progress}%` }} />
       </div>
-      <div className="progress-steps">
+      <div className="progress-steps" aria-hidden="true">
         {NODE_ORDER.map((node, idx) => (
           <span
             key={node}

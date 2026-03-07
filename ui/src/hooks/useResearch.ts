@@ -1,11 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { submitResearch, pollJob, cancelJob, submitFeedback } from "../api";
 import type { Message, JobStatus, OutputMode } from "../types";
-
-let nextId = 1;
-function genId(): string {
-  return `msg-${nextId++}`;
-}
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -13,109 +8,172 @@ export function useResearch() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentJob, setCurrentJob] = useState<JobStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const activeJobIdRef = useRef<string | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+    activeJobIdRef.current = null;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
   }, []);
 
-  const send = useCallback(
-    async (query: string, tools: string[], outputMode: OutputMode) => {
-      const userMsg: Message = {
-        id: genId(),
-        role: "user",
-        content: query,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, userMsg]);
-      setIsLoading(true);
+  const poll = useCallback(
+    async (jobId: string) => {
+      if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
 
       try {
-        const { job_id } = await submitResearch(query, tools, outputMode);
-        setCurrentJob({ job_id, status: "pending" });
+        const status = await pollJob(jobId);
+        if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
 
-        pollRef.current = setInterval(async () => {
-          try {
-            const status = await pollJob(job_id);
-            setCurrentJob(status);
+        setCurrentJob(status);
 
-            if (
-              status.status === "completed" ||
-              status.status === "failed" ||
-              status.status === "cancelled"
-            ) {
-              stopPolling();
-              setIsLoading(false);
+        const terminal = ["completed", "failed", "cancelled"].includes(
+          status.status
+        );
+        if (terminal) {
+          stopPolling();
+          setIsLoading(false);
 
-              if (status.status === "completed" && status.result) {
-                const assistantMsg: Message = {
-                  id: genId(),
-                  role: "assistant",
-                  content: status.result,
-                  timestamp: new Date(),
-                  jobId: job_id,
-                };
-                setMessages((prev) => [...prev, assistantMsg]);
-              } else if (status.status === "failed") {
-                const errorMsg: Message = {
-                  id: genId(),
-                  role: "assistant",
-                  content: "Research failed. Please try again.",
-                  timestamp: new Date(),
-                  jobId: job_id,
-                };
-                setMessages((prev) => [...prev, errorMsg]);
-              }
-              setCurrentJob(null);
-            }
-          } catch {
-            stopPolling();
-            setIsLoading(false);
-            setCurrentJob(null);
+          if (status.status === "completed" && status.result) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: status.result!,
+                timestamp: new Date().toISOString(),
+                jobId,
+              },
+            ]);
+          } else if (status.status === "failed") {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Research failed. Please try again.",
+                timestamp: new Date().toISOString(),
+                jobId,
+              },
+            ]);
           }
-        }, POLL_INTERVAL_MS);
+          setCurrentJob(null);
+          return;
+        }
+
+        // Schedule next poll
+        timeoutRef.current = setTimeout(() => poll(jobId), POLL_INTERVAL_MS);
       } catch {
+        if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
+        stopPolling();
         setIsLoading(false);
-        const errorMsg: Message = {
-          id: genId(),
-          role: "assistant",
-          content: "Failed to submit research query.",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, errorMsg]);
+        setCurrentJob(null);
+        setError("Lost connection while polling for results.");
       }
     },
     [stopPolling]
   );
 
-  const cancel = useCallback(async () => {
-    if (currentJob) {
-      try {
-        await cancelJob(currentJob.job_id);
-      } catch {
-        /* ignore */
-      }
+  const send = useCallback(
+    async (query: string, tools: string[], outputMode: OutputMode) => {
+      if (isLoading) return;
+
+      setError(null);
+
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: query,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setIsLoading(true);
+
+      // Stop any existing polling before starting new job
       stopPolling();
-      setIsLoading(false);
-      setCurrentJob(null);
+
+      try {
+        const { job_id } = await submitResearch(query, tools, outputMode);
+        if (!mountedRef.current) return;
+
+        activeJobIdRef.current = job_id;
+        setCurrentJob({ job_id, status: "pending" });
+
+        // Start polling with setTimeout (not setInterval)
+        timeoutRef.current = setTimeout(() => poll(job_id), POLL_INTERVAL_MS);
+      } catch {
+        if (!mountedRef.current) return;
+        setIsLoading(false);
+        setError("Failed to submit research query.");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Failed to submit research query.",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    },
+    [isLoading, stopPolling, poll]
+  );
+
+  const cancel = useCallback(async () => {
+    const jobId = activeJobIdRef.current;
+    if (!jobId) return;
+
+    stopPolling();
+    setIsLoading(false);
+    setCurrentJob(null);
+
+    try {
+      await cancelJob(jobId);
+    } catch {
+      // Best-effort cancellation
     }
-  }, [currentJob, stopPolling]);
+  }, [stopPolling]);
 
   const rate = useCallback(
     async (messageId: string, rating: "thumbs_up" | "thumbs_down") => {
+      let targetJobId: string | undefined;
+
       setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, rating } : m))
+        prev.map((m) => {
+          if (m.id === messageId) {
+            targetJobId = m.jobId;
+            return { ...m, rating };
+          }
+          return m;
+        })
       );
-      const msg = messages.find((m) => m.id === messageId);
-      if (msg?.jobId) {
-        await submitFeedback(msg.jobId, rating);
+
+      if (targetJobId) {
+        try {
+          await submitFeedback(targetJobId, rating);
+        } catch {
+          // Feedback submission is best-effort
+        }
       }
     },
-    [messages]
+    []
   );
 
-  return { messages, currentJob, isLoading, send, cancel, rate };
+  return { messages, currentJob, isLoading, error, send, cancel, rate };
 }

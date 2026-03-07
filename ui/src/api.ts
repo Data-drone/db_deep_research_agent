@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Tool, JobStatus } from "./types";
 
-const client = axios.create({ baseURL: "/" });
+const client = axios.create({ baseURL: "/", timeout: 15000 });
 
 export async function fetchTools(): Promise<Tool[]> {
   const res = await client.get<Tool[]>("/api/tools");

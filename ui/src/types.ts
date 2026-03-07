@@ -8,7 +8,7 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  timestamp: Date;
+  timestamp: string; // ISO string for serialization safety
   jobId?: string;
   rating?: "thumbs_up" | "thumbs_down";
 }
@@ -18,6 +18,7 @@ export interface JobStatus {
   status: "pending" | "running" | "completed" | "cancelled" | "failed";
   result?: string;
   current_node?: string;
+  error?: string;
 }
 
 export type OutputMode = "chat" | "report";
