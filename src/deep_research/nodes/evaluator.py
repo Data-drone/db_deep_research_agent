@@ -40,15 +40,14 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
     try:
         result = json.loads(response.content)
     except (json.JSONDecodeError, AttributeError):
-        # Fallback: stop if we have evidence, continue otherwise
-        decision = "stop" if evidence else "continue"
+        # Fallback: always stop on parse failure to avoid looping
         return {
             "evaluator_decision": EvaluatorDecision(
                 sufficiency_score=0.5,
                 missing_facets=[],
                 recommended_actions=[],
-                decision=decision,
-                reason="Failed to parse evaluator response",
+                decision="stop",
+                reason="Failed to parse evaluator response — stopping",
             ),
             "sufficiency_score": 0.5,
         }
@@ -57,6 +56,13 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
     decision = result.get("decision", "stop")
     if budget_exhausted and decision == "continue":
         decision = "stop"
+
+    # Stop if no new evidence was gathered this iteration (no progress)
+    if decision == "continue" and iteration > 0:
+        new_evidence = [e for e in evidence if e.iteration == iteration]
+        if not new_evidence:
+            decision = "stop"
+            logger.info("No new evidence gathered — stopping research loop")
 
     evaluator_decision = EvaluatorDecision(
         sufficiency_score=result.get("sufficiency_score", 0.5),
