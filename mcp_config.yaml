@@ -1,18 +1,11 @@
 managed_servers:
-  genie_sales:
-    url: "{host}/api/2.0/mcp/genie/{space_id}"
-    display_name: "Sales Data (Genie)"
+  genie_aviation:
+    url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/mcp/genie/01f119f088e8109ca1fc6ccf7bac36d1"
+    display_name: "Airport & Airline Passenger Analytics (Genie)"
     enabled: true
     risk_tier: "safe"
     capability: "read"
-    description: "Query sales data via Genie"
-  vector_search_kb:
-    url: "{host}/api/2.0/mcp/vector-search/{index}"
-    display_name: "Knowledge Base"
-    enabled: true
-    risk_tier: "safe"
-    capability: "read"
-    description: "Search internal knowledge base documents"
+    description: "Query airport, airline, flight, and passenger data via Genie"
 
 custom_servers:
   # Future custom MCP servers hosted on Databricks Apps
