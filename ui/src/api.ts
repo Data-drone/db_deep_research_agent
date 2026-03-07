@@ -41,3 +41,34 @@ export async function submitFeedback(
     comment,
   });
 }
+
+export function streamJob(
+  jobId: string,
+  onEvent: (event: { type: string; node?: string; result?: string; error?: string }) => void,
+  onError: (err: Error) => void
+): () => void {
+  const es = new EventSource(`/api/research/${jobId}/stream`);
+  let receivedTerminal = false;
+
+  es.onmessage = (msg) => {
+    try {
+      const event = JSON.parse(msg.data);
+      onEvent(event);
+      if (["completed", "failed", "cancelled"].includes(event.type)) {
+        receivedTerminal = true;
+        es.close();
+      }
+    } catch {
+      // Ignore unparseable messages (keepalives)
+    }
+  };
+
+  es.onerror = () => {
+    if (receivedTerminal) return;
+    es.close();
+    onError(new Error("SSE connection lost"));
+  };
+
+  // Return cleanup function
+  return () => es.close();
+}

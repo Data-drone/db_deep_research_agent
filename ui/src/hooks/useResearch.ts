@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { submitResearch, pollJob, cancelJob, submitFeedback } from "../api";
+import { submitResearch, streamJob, cancelJob, submitFeedback } from "../api";
 import type { Message, JobStatus, OutputMode } from "../types";
-
-const POLL_INTERVAL_MS = 1500;
 
 export function useResearch() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -11,83 +9,80 @@ export function useResearch() {
   const [error, setError] = useState<string | null>(null);
 
   const activeJobIdRef = useRef<string | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
+      cleanupRef.current?.();
+      cleanupRef.current = null;
     };
   }, []);
 
-  const stopPolling = useCallback(() => {
+  const stopStream = useCallback(() => {
     activeJobIdRef.current = null;
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
+    cleanupRef.current?.();
+    cleanupRef.current = null;
   }, []);
 
-  const poll = useCallback(
-    async (jobId: string) => {
-      if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
+  const startStream = useCallback(
+    (jobId: string) => {
+      if (!mountedRef.current) return;
 
-      try {
-        const status = await pollJob(jobId);
-        if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
+      const cleanup = streamJob(
+        jobId,
+        (event) => {
+          if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
 
-        setCurrentJob(status);
-
-        const terminal = ["completed", "failed", "cancelled"].includes(
-          status.status
-        );
-        if (terminal) {
-          stopPolling();
-          setIsLoading(false);
-
-          if (status.status === "completed" && status.result) {
+          if (event.type === "node_started" && event.node) {
+            setCurrentJob((prev) =>
+              prev ? { ...prev, status: "running", current_node: event.node } : prev
+            );
+          } else if (event.type === "completed") {
+            stopStream();
+            setIsLoading(false);
+            setCurrentJob(null);
+            if (event.result) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: event.result!,
+                  timestamp: new Date().toISOString(),
+                  jobId,
+                },
+              ]);
+            }
+          } else if (event.type === "failed") {
+            stopStream();
+            setIsLoading(false);
+            setCurrentJob(null);
             setMessages((prev) => [
               ...prev,
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: status.result!,
-                timestamp: new Date().toISOString(),
-                jobId,
-              },
-            ]);
-          } else if (status.status === "failed") {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: "Research failed. Please try again.",
+                content: event.error || "Research failed. Please try again.",
                 timestamp: new Date().toISOString(),
                 jobId,
               },
             ]);
           }
+        },
+        () => {
+          if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
+          stopStream();
+          setIsLoading(false);
           setCurrentJob(null);
-          return;
+          setError("Lost connection to research stream.");
         }
+      );
 
-        // Schedule next poll
-        timeoutRef.current = setTimeout(() => poll(jobId), POLL_INTERVAL_MS);
-      } catch {
-        if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
-        stopPolling();
-        setIsLoading(false);
-        setCurrentJob(null);
-        setError("Lost connection while polling for results.");
-      }
+      cleanupRef.current = cleanup;
     },
-    [stopPolling]
+    [stopStream]
   );
 
   const send = useCallback(
@@ -105,8 +100,7 @@ export function useResearch() {
       setMessages((prev) => [...prev, userMsg]);
       setIsLoading(true);
 
-      // Stop any existing polling before starting new job
-      stopPolling();
+      stopStream();
 
       try {
         const { job_id } = await submitResearch(query, tools, outputMode);
@@ -115,8 +109,7 @@ export function useResearch() {
         activeJobIdRef.current = job_id;
         setCurrentJob({ job_id, status: "pending" });
 
-        // Start polling with setTimeout (not setInterval)
-        timeoutRef.current = setTimeout(() => poll(job_id), POLL_INTERVAL_MS);
+        startStream(job_id);
       } catch {
         if (!mountedRef.current) return;
         setIsLoading(false);
@@ -132,14 +125,14 @@ export function useResearch() {
         ]);
       }
     },
-    [isLoading, stopPolling, poll]
+    [isLoading, stopStream, startStream]
   );
 
   const cancel = useCallback(async () => {
     const jobId = activeJobIdRef.current;
     if (!jobId) return;
 
-    stopPolling();
+    stopStream();
     setIsLoading(false);
     setCurrentJob(null);
 
@@ -148,7 +141,7 @@ export function useResearch() {
     } catch {
       // Best-effort cancellation
     }
-  }, [stopPolling]);
+  }, [stopStream]);
 
   const rate = useCallback(
     async (messageId: string, rating: "thumbs_up" | "thumbs_down") => {
