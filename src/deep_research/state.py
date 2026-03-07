@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from deep_research.models import (
     Budget,
@@ -59,6 +59,10 @@ class ResearchState(TypedDict, total=False):
 
     # Job control
     cancelled: bool
+
+    # Runtime-only (injected by _run_graph for token streaming, not persisted)
+    _job_manager: Any
+    _job_id: str
 
 
 def create_initial_state(
