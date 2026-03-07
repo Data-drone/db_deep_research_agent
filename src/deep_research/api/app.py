@@ -48,6 +48,7 @@ async def _run_graph(
                     job_manager.update_state(
                         job_id, "running", current_node=node_name
                     )
+                    job_manager.push_event(job_id, {"type": "node_started", "node": node_name})
                     final_state = event[node_name]
 
             final_output = ""
@@ -62,11 +63,13 @@ async def _run_graph(
                 final_output = "Research completed but produced no output."
 
         job_manager.update_state(job_id, "completed", result=final_output)
+        job_manager.push_event(job_id, {"type": "completed", "result": final_output})
     except Exception as exc:
         logger.exception(f"Graph execution failed for job {job_id}")
         job_manager.update_state(
             job_id, "failed", error=f"Research execution failed: {exc}"
         )
+        job_manager.push_event(job_id, {"type": "failed", "error": f"Research execution failed: {exc}"})
 
 
 def create_app(use_mocks: bool = False) -> FastAPI:

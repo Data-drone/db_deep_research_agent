@@ -238,3 +238,33 @@ async def test_job_event_queue_unknown_job():
     jm = JobManager()
     with pytest.raises(KeyError):
         jm.get_event_queue("nonexistent")
+
+
+async def test_run_graph_pushes_events():
+    """_run_graph pushes node_started events and a completed event to the queue."""
+    jm = JobManager()
+    job_id = jm.create_job(query="test", tools=[])
+
+    class _MultiNodeGraph:
+        async def astream(self, state, stream_mode="updates"):
+            yield {"clarifier": {"clarified_query": "test"}}
+            yield {"planner": {"research_plan": []}}
+            yield {"verifier": {"final_output": "done"}}
+
+    await _run_graph(_MultiNodeGraph(), jm, job_id, {})
+
+    events = []
+    queue = jm.get_event_queue(job_id)
+    while not queue.empty():
+        events.append(queue.get_nowait())
+
+    node_events = [e for e in events if e["type"] == "node_started"]
+    assert len(node_events) == 3
+    assert node_events[0]["node"] == "clarifier"
+    assert node_events[1]["node"] == "planner"
+    assert node_events[2]["node"] == "verifier"
+
+    terminal = [e for e in events if e["type"] in ("completed", "failed")]
+    assert len(terminal) == 1
+    assert terminal[0]["type"] == "completed"
+    assert terminal[0]["result"] == "done"
