@@ -103,9 +103,49 @@ def create_production_app():
     app.state.mcp_manager = mcp_manager
     app.state.config = config
 
-    # Serve React build if it exists — mounted AFTER API routes
-    # so /api/* and /health are handled by the app first.
-    # Try multiple paths since __file__ resolution varies by deployment.
+    # ── Debug / spike test endpoints (registered BEFORE StaticFiles mount) ──
+
+    # Temporary debug endpoint to diagnose deployment
+    @app.get("/debug/paths")
+    async def debug_paths():
+        cwd = os.getcwd()
+        cwd_contents = []
+        try:
+            cwd_contents = sorted(os.listdir(cwd))
+        except Exception as e:
+            cwd_contents = [f"error: {e}"]
+        return {
+            "cwd": cwd,
+            "__file__": __file__,
+            "app_initialized": True,
+        }
+
+    # SSE spike test — verifies Databricks Apps proxy streams events incrementally.
+    # Remove after confirming SSE works.
+    import asyncio as _asyncio
+    import json as _json
+    from starlette.responses import StreamingResponse as _StreamingResponse
+
+    @app.get("/debug/sse-test")
+    async def sse_test():
+        async def _generate():
+            for i in range(5):
+                event = {"seq": i, "msg": f"event {i}"}
+                yield f"data: {_json.dumps(event)}\n\n"
+                await _asyncio.sleep(1)
+            yield f"data: {_json.dumps({'seq': 5, 'msg': 'done'})}\n\n"
+
+        return _StreamingResponse(
+            _generate(),
+            media_type="text/event-stream",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # Serve React build if it exists — mounted LAST so API routes take priority.
     candidates = [
         Path(__file__).parent.parent.parent / "ui" / "dist",
         Path(os.getcwd()) / "ui" / "dist",
@@ -124,32 +164,6 @@ def create_production_app():
         logger.info(f"Serving React UI from {actual_ui_dist}")
     else:
         logger.info("No UI build found — API-only mode")
-
-    # Temporary debug endpoint to diagnose deployment
-    @app.get("/debug/paths")
-    async def debug_paths():
-        cwd = os.getcwd()
-        cwd_contents = []
-        try:
-            cwd_contents = sorted(os.listdir(cwd))
-        except Exception as e:
-            cwd_contents = [f"error: {e}"]
-        ui_files = []
-        if actual_ui_dist:
-            try:
-                ui_files = sorted(os.listdir(str(actual_ui_dist)))
-            except Exception as e:
-                ui_files = [f"error: {e}"]
-        return {
-            "cwd": cwd,
-            "__file__": __file__,
-            "candidates": [str(c) for c in candidates],
-            "candidates_exist": [c.exists() for c in candidates],
-            "actual_ui_dist": str(actual_ui_dist) if actual_ui_dist else None,
-            "cwd_files": cwd_contents,
-            "ui_files": ui_files,
-            "app_initialized": True,
-        }
 
     logger.info("Application initialization complete")
     return app
