@@ -26,8 +26,8 @@ class MCPServerConfig:
 @dataclass(frozen=True)
 class AppConfig:
     databricks_host: str
-    databricks_token: str
     llm_endpoint: str
+    databricks_token: str = ""
     max_iterations: int = 5
     max_tool_calls: int = 20
     time_cap_seconds: int = 120
@@ -78,22 +78,21 @@ def load_mcp_config(path: Path) -> dict[str, MCPServerConfig]:
 def load_app_config(mcp_config_path: Path | None = None) -> AppConfig:
     """Load full application config from environment + YAML.
 
-    Required env vars: DATABRICKS_HOST, DATABRICKS_TOKEN.
+    Required env vars: DATABRICKS_HOST.
+    Auth: Uses Databricks SDK unified auth — supports DATABRICKS_TOKEN (PAT)
+    or DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET (OAuth/service principal).
     Optional: LLM_ENDPOINT_NAME, MAX_ITERATIONS, MAX_TOOL_CALLS, TIME_CAP_SECONDS.
     """
     mcp_path = mcp_config_path or Path("mcp_config.yaml")
     servers = load_mcp_config(mcp_path) if mcp_path.exists() else {}
 
     host = os.environ.get("DATABRICKS_HOST", "")
-    token = os.environ.get("DATABRICKS_TOKEN", "")
-
-    missing = []
     if not host:
-        missing.append("DATABRICKS_HOST")
-    if not token:
-        missing.append("DATABRICKS_TOKEN")
-    if missing:
-        raise ConfigError(f"Missing required environment variables: {', '.join(missing)}")
+        raise ConfigError("Missing required environment variable: DATABRICKS_HOST")
+
+    # Token is optional — Databricks Apps use OAuth (CLIENT_ID/CLIENT_SECRET)
+    # and the SDK picks those up automatically via unified auth.
+    token = os.environ.get("DATABRICKS_TOKEN", "")
 
     managed = tuple(v for v in servers.values() if v.server_kind == "managed")
     custom = tuple(v for v in servers.values() if v.server_kind == "custom")
