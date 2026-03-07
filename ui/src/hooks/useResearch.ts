@@ -39,22 +39,62 @@ export function useResearch() {
             setCurrentJob((prev) =>
               prev ? { ...prev, status: "running", current_node: event.node } : prev
             );
+          } else if (event.type === "token" && event.content) {
+            const tokenText = event.content;
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg?.streaming && lastMsg.jobId === jobId) {
+                // Append to existing streaming message
+                return [
+                  ...prev.slice(0, -1),
+                  { ...lastMsg, content: lastMsg.content + tokenText },
+                ];
+              } else {
+                // Create new streaming message
+                return [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: "assistant" as const,
+                    content: tokenText,
+                    timestamp: new Date().toISOString(),
+                    jobId,
+                    streaming: true,
+                  },
+                ];
+              }
+            });
           } else if (event.type === "completed") {
             stopStream();
             setIsLoading(false);
             setCurrentJob(null);
-            if (event.result) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: "assistant",
-                  content: event.result!,
-                  timestamp: new Date().toISOString(),
-                  jobId,
-                },
-              ]);
-            }
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg?.streaming && lastMsg.jobId === jobId) {
+                // Finalize streaming message with full result
+                return [
+                  ...prev.slice(0, -1),
+                  {
+                    ...lastMsg,
+                    content: event.result || lastMsg.content,
+                    streaming: false,
+                  },
+                ];
+              } else if (event.result) {
+                // No streaming happened — create message from full result
+                return [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: "assistant" as const,
+                    content: event.result,
+                    timestamp: new Date().toISOString(),
+                    jobId,
+                  },
+                ];
+              }
+              return prev;
+            });
           } else if (event.type === "failed") {
             stopStream();
             setIsLoading(false);

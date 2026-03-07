@@ -11,6 +11,7 @@ export interface Message {
   timestamp: string; // ISO string for serialization safety
   jobId?: string;
   rating?: "thumbs_up" | "thumbs_down";
+  streaming?: boolean; // true while tokens are still arriving
 }
 
 export interface JobStatus {

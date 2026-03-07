@@ -44,7 +44,7 @@ export async function submitFeedback(
 
 export function streamJob(
   jobId: string,
-  onEvent: (event: { type: string; node?: string; result?: string; error?: string }) => void,
+  onEvent: (event: { type: string; node?: string; result?: string; error?: string; content?: string }) => void,
   onError: (err: Error) => void
 ): () => void {
   const es = new EventSource(`/api/research/${jobId}/stream`);

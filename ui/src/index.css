@@ -23,3 +23,12 @@ body {
 #root {
   height: 100vh;
 }
+
+.streaming-cursor {
+  display: inline;
+  animation: blink 1s step-end infinite;
+  color: var(--accent, #3b82f6);
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}

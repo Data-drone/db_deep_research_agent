@@ -24,6 +24,9 @@ export function MessageBubble({ message, onRate }: Props) {
             >
               {message.content}
             </ReactMarkdown>
+            {message.streaming && (
+              <span className="streaming-cursor" aria-hidden="true">&#9610;</span>
+            )}
           </div>
         )}
       </div>
