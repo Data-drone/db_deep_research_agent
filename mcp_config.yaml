@@ -7,5 +7,13 @@ managed_servers:
     capability: "read"
     description: "Query airport, airline, flight, and passenger data via Genie"
 
+  genie_sales_pipeline:
+    url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/mcp/genie/01f0c563dc4614b79d62c72b7b011149"
+    display_name: "Sales Pipeline Review (Genie)"
+    enabled: true
+    risk_tier: "safe"
+    capability: "read"
+    description: "Analyze sales pipeline performance, metrics, and data via Genie"
+
 custom_servers:
   # Future custom MCP servers hosted on Databricks Apps
