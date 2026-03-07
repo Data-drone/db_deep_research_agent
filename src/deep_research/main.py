@@ -36,7 +36,7 @@ def _create_model(config):
     from deep_research.config import ConfigError
 
     try:
-        from langchain_databricks import ChatDatabricks
+        from databricks_langchain import ChatDatabricks
 
         model = ChatDatabricks(endpoint=config.llm_endpoint)
         logger.info(f"LLM model initialized: {config.llm_endpoint}")
@@ -104,16 +104,52 @@ def create_production_app():
     app.state.config = config
 
     # Serve React build if it exists — mounted AFTER API routes
-    # so /api/* and /health are handled by the app first
-    ui_dist = Path(__file__).parent.parent.parent / "ui" / "dist"
-    logger.info(f"Checking for UI at: {ui_dist} (exists: {ui_dist.exists()})")
-    if ui_dist.exists():
+    # so /api/* and /health are handled by the app first.
+    # Try multiple paths since __file__ resolution varies by deployment.
+    candidates = [
+        Path(__file__).parent.parent.parent / "ui" / "dist",
+        Path(os.getcwd()) / "ui" / "dist",
+    ]
+    actual_ui_dist = None
+    for candidate in candidates:
+        logger.info(f"Checking for UI at: {candidate} (exists: {candidate.exists()})")
+        if candidate.exists() and (candidate / "index.html").exists():
+            actual_ui_dist = candidate
+            break
+
+    if actual_ui_dist:
         from fastapi.staticfiles import StaticFiles
 
-        app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")
-        logger.info(f"Serving React UI from {ui_dist}")
+        app.mount("/", StaticFiles(directory=str(actual_ui_dist), html=True), name="ui")
+        logger.info(f"Serving React UI from {actual_ui_dist}")
     else:
         logger.info("No UI build found — API-only mode")
+
+    # Temporary debug endpoint to diagnose deployment
+    @app.get("/debug/paths")
+    async def debug_paths():
+        cwd = os.getcwd()
+        cwd_contents = []
+        try:
+            cwd_contents = sorted(os.listdir(cwd))
+        except Exception as e:
+            cwd_contents = [f"error: {e}"]
+        ui_files = []
+        if actual_ui_dist:
+            try:
+                ui_files = sorted(os.listdir(str(actual_ui_dist)))
+            except Exception as e:
+                ui_files = [f"error: {e}"]
+        return {
+            "cwd": cwd,
+            "__file__": __file__,
+            "candidates": [str(c) for c in candidates],
+            "candidates_exist": [c.exists() for c in candidates],
+            "actual_ui_dist": str(actual_ui_dist) if actual_ui_dist else None,
+            "cwd_files": cwd_contents,
+            "ui_files": ui_files,
+            "app_initialized": True,
+        }
 
     logger.info("Application initialization complete")
     return app
@@ -121,9 +157,12 @@ def create_production_app():
 
 # Module-level app for non-factory uvicorn usage: `uvicorn deep_research.main:app`
 # Also works with --factory: `uvicorn deep_research.main:create_production_app --factory`
+_startup_error = None
 try:
     app = create_production_app()
-except Exception:
+except Exception as exc:
+    import traceback
+    _startup_error = traceback.format_exc()
     logger.exception("Failed to create app — starting with health-check-only fallback")
     from fastapi import FastAPI
     app = FastAPI(title="Deep Research Agent (startup failed)")
@@ -131,6 +170,15 @@ except Exception:
     @app.get("/health")
     async def health():
         return {"status": "error", "message": "App failed to initialize"}
+
+    @app.get("/debug/paths")
+    async def debug_paths():
+        return {
+            "app_initialized": False,
+            "cwd": os.getcwd(),
+            "__file__": __file__,
+            "startup_error": _startup_error,
+        }
 
 
 if __name__ == "__main__":

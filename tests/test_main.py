@@ -49,7 +49,7 @@ class TestBuildServerMap:
 
 
 class TestCreateModel:
-    def test_missing_langchain_databricks_raises(self):
+    def test_missing_databricks_langchain_raises(self):
         """Without langchain-databricks installed, should raise ConfigError."""
 
         @dataclass
@@ -57,7 +57,7 @@ class TestCreateModel:
             llm_endpoint: str = "test-endpoint"
 
         # Patch the import inside _create_model to simulate ImportError
-        with patch.dict("sys.modules", {"langchain_databricks": None}):
+        with patch.dict("sys.modules", {"databricks_langchain": None}):
             with pytest.raises(ConfigError, match="langchain-databricks is required"):
                 _create_model(FakeLLMConfig())
 
@@ -70,7 +70,7 @@ class TestCreateModel:
         class FakeLLMConfig:
             llm_endpoint: str = "test-endpoint"
 
-        with patch.dict("sys.modules", {"langchain_databricks": mock_module}):
+        with patch.dict("sys.modules", {"databricks_langchain": mock_module}):
             with pytest.raises(ConfigError, match="Failed to initialize LLM model"):
                 _create_model(FakeLLMConfig())
 
@@ -84,7 +84,7 @@ class TestCreateModel:
         class FakeLLMConfig:
             llm_endpoint: str = "test-endpoint"
 
-        with patch.dict("sys.modules", {"langchain_databricks": mock_module}):
+        with patch.dict("sys.modules", {"databricks_langchain": mock_module}):
             result = _create_model(FakeLLMConfig())
             assert result is mock_model
             mock_module.ChatDatabricks.assert_called_once_with(endpoint="test-endpoint")
