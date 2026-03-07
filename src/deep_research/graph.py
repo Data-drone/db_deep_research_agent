@@ -1,0 +1,70 @@
+"""LangGraph research agent graph builder."""
+
+from __future__ import annotations
+
+from functools import partial
+from typing import Any
+
+from langgraph.graph import END, StateGraph
+
+from deep_research.mcp_client import MCPClientManager
+from deep_research.nodes import (
+    authorizer_node,
+    clarifier_node,
+    compressor_node,
+    evaluator_node,
+    normalizer_node,
+    planner_node,
+    researcher_node,
+    synthesizer_node,
+    verifier_node,
+)
+from deep_research.state import ResearchState
+
+
+def _should_continue(state: ResearchState) -> str:
+    """Routing function after evaluator: continue research or compress."""
+    decision = state.get("evaluator_decision")
+    if decision and decision.decision == "continue":
+        budget = state.get("budget")
+        iteration = state.get("iteration_count", 0)
+        if budget and iteration >= budget.max_iterations:
+            return "compressor"
+        return "planner"
+    return "compressor"
+
+
+def build_research_graph(
+    model: Any,
+    mcp_manager: MCPClientManager | None,
+) -> Any:
+    """Build and compile the full research agent graph."""
+    graph = StateGraph(ResearchState)
+
+    # Add nodes — each wraps the node function with injected dependencies
+    graph.add_node("clarifier", partial(clarifier_node, model=model))
+    graph.add_node("planner", partial(planner_node, model=model))
+    graph.add_node("authorizer", partial(authorizer_node, model=model))
+    graph.add_node("researcher", partial(researcher_node, model=model, mcp_manager=mcp_manager))
+    graph.add_node("normalizer", partial(normalizer_node, model=model))
+    graph.add_node("evaluator", partial(evaluator_node, model=model))
+    graph.add_node("compressor", partial(compressor_node, model=model))
+    graph.add_node("synthesizer", partial(synthesizer_node, model=model))
+    graph.add_node("verifier", partial(verifier_node, model=model))
+
+    # Define edges
+    graph.set_entry_point("clarifier")
+    graph.add_edge("clarifier", "planner")
+    graph.add_edge("planner", "authorizer")
+    graph.add_edge("authorizer", "researcher")
+    graph.add_edge("researcher", "normalizer")
+    graph.add_edge("normalizer", "evaluator")
+    graph.add_conditional_edges("evaluator", _should_continue, {
+        "planner": "planner",
+        "compressor": "compressor",
+    })
+    graph.add_edge("compressor", "synthesizer")
+    graph.add_edge("synthesizer", "verifier")
+    graph.add_edge("verifier", END)
+
+    return graph.compile()
