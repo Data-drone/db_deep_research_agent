@@ -10,11 +10,14 @@ from deep_research.config import AppConfig, MCPServerConfig
 @pytest.fixture
 def sample_mcp_server():
     return MCPServerConfig(
+        name="genie_test",
         url="https://test.databricks.net/api/2.0/mcp/genie/test-space",
         display_name="Test Genie",
+        server_kind="managed",
         enabled=True,
         risk_tier="safe",
         capability="read",
+        managed_type="genie",
         description="Test Genie space",
     )
 
@@ -25,7 +28,7 @@ def sample_app_config(sample_mcp_server):
         databricks_host="https://test.databricks.net",
         databricks_token="dapi_test_token",
         llm_endpoint="databricks-meta-llama-3-1-70b-instruct",
-        managed_servers={"genie_test": sample_mcp_server},
+        managed_servers=(sample_mcp_server,),
     )
 
 

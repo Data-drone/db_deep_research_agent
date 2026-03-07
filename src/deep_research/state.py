@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, TypedDict
 
 from deep_research.models import (
@@ -37,6 +38,8 @@ class ResearchState(TypedDict, total=False):
     evidence: list[Evidence]
     tool_call_log: list[ToolCall]
     iteration_count: int
+    tool_calls_used: int
+    started_at: datetime | None
 
     # Evaluation
     sufficiency_score: float
@@ -64,6 +67,7 @@ def create_initial_state(
     output_mode: Literal["chat", "report"] = "chat",
     job_id: str = "",
     trace_id: str = "",
+    budget: Budget | None = None,
 ) -> ResearchState:
     """Create a fresh state for a new research query."""
     return ResearchState(
@@ -74,10 +78,12 @@ def create_initial_state(
         clarification_needed=False,
         research_plan=[],
         tool_assignments={},
-        budget=Budget(),
+        budget=budget or Budget(),
         evidence=[],
         tool_call_log=[],
         iteration_count=0,
+        tool_calls_used=0,
+        started_at=None,
         sufficiency_score=0.0,
         missing_facets=[],
         stop_reason=None,

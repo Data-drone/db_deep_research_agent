@@ -12,11 +12,14 @@ import yaml
 
 @dataclass(frozen=True)
 class MCPServerConfig:
+    name: str
     url: str
     display_name: str
+    server_kind: Literal["managed", "custom"]
     enabled: bool = True
     risk_tier: Literal["safe", "restricted", "privileged"] = "safe"
     capability: Literal["read", "read_write"] = "read"
+    managed_type: Literal["genie", "vector_search"] | None = None
     description: str = ""
 
 
@@ -28,8 +31,22 @@ class AppConfig:
     max_iterations: int = 5
     max_tool_calls: int = 20
     time_cap_seconds: int = 120
-    managed_servers: dict[str, MCPServerConfig] = field(default_factory=dict)
-    custom_servers: dict[str, MCPServerConfig] = field(default_factory=dict)
+    managed_servers: tuple[MCPServerConfig, ...] = ()
+    custom_servers: tuple[MCPServerConfig, ...] = ()
+
+    def get_server(self, name: str) -> MCPServerConfig | None:
+        """Look up a server by name across managed and custom."""
+        for s in self.managed_servers + self.custom_servers:
+            if s.name == name:
+                return s
+        return None
+
+    def all_servers(self) -> tuple[MCPServerConfig, ...]:
+        return self.managed_servers + self.custom_servers
+
+
+class ConfigError(Exception):
+    """Raised when configuration is invalid or incomplete."""
 
 
 def load_mcp_config(path: Path) -> dict[str, MCPServerConfig]:
@@ -39,23 +56,51 @@ def load_mcp_config(path: Path) -> dict[str, MCPServerConfig]:
 
     servers: dict[str, MCPServerConfig] = {}
     for section in ("managed_servers", "custom_servers"):
+        kind: Literal["managed", "custom"] = "managed" if section == "managed_servers" else "custom"
         for name, cfg in (raw.get(section) or {}).items():
-            if isinstance(cfg, dict):
-                servers[name] = MCPServerConfig(**cfg)
+            if not isinstance(cfg, dict):
+                continue
+            if name in servers:
+                raise ConfigError(f"Duplicate server name: {name}")
+            cfg_copy = dict(cfg)
+            cfg_copy["name"] = name
+            cfg_copy["server_kind"] = kind
+            # Infer managed_type from YAML section context
+            if kind == "managed" and "managed_type" not in cfg_copy:
+                if "genie" in name.lower():
+                    cfg_copy["managed_type"] = "genie"
+                elif "vector" in name.lower():
+                    cfg_copy["managed_type"] = "vector_search"
+            servers[name] = MCPServerConfig(**cfg_copy)
     return servers
 
 
 def load_app_config(mcp_config_path: Path | None = None) -> AppConfig:
-    """Load full application config from environment + YAML."""
+    """Load full application config from environment + YAML.
+
+    Required env vars: DATABRICKS_HOST, DATABRICKS_TOKEN.
+    Optional: LLM_ENDPOINT_NAME, MAX_ITERATIONS, MAX_TOOL_CALLS, TIME_CAP_SECONDS.
+    """
     mcp_path = mcp_config_path or Path("mcp_config.yaml")
     servers = load_mcp_config(mcp_path) if mcp_path.exists() else {}
 
-    managed = {k: v for k, v in servers.items() if k.startswith("genie") or k.startswith("vector")}
-    custom = {k: v for k, v in servers.items() if k not in managed}
+    host = os.environ.get("DATABRICKS_HOST", "")
+    token = os.environ.get("DATABRICKS_TOKEN", "")
+
+    missing = []
+    if not host:
+        missing.append("DATABRICKS_HOST")
+    if not token:
+        missing.append("DATABRICKS_TOKEN")
+    if missing:
+        raise ConfigError(f"Missing required environment variables: {', '.join(missing)}")
+
+    managed = tuple(v for v in servers.values() if v.server_kind == "managed")
+    custom = tuple(v for v in servers.values() if v.server_kind == "custom")
 
     return AppConfig(
-        databricks_host=os.environ.get("DATABRICKS_HOST", ""),
-        databricks_token=os.environ.get("DATABRICKS_TOKEN", ""),
+        databricks_host=host,
+        databricks_token=token,
         llm_endpoint=os.environ.get("LLM_ENDPOINT_NAME", "databricks-meta-llama-3-1-70b-instruct"),
         max_iterations=int(os.environ.get("MAX_ITERATIONS", "5")),
         max_tool_calls=int(os.environ.get("MAX_TOOL_CALLS", "20")),
