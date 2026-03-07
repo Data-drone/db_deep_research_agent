@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,6 +31,7 @@ class JobManager:
 
     def __init__(self) -> None:
         self._jobs: dict[str, JobStatus] = {}
+        self._queues: dict[str, asyncio.Queue] = {}
 
     def create_job(
         self,
@@ -45,6 +50,7 @@ class JobManager:
             created_by=user_id,
             created_at=datetime.now(timezone.utc),
         )
+        self._queues[job_id] = asyncio.Queue()
         return job_id
 
     def get_status(self, job_id: str, user_id: str = "") -> JobStatus:
@@ -76,3 +82,15 @@ class JobManager:
     def cancel_job(self, job_id: str, user_id: str = "") -> None:
         self.get_status(job_id, user_id=user_id)  # validates ownership
         self.update_state(job_id, "cancelled")
+
+    def get_event_queue(self, job_id: str) -> asyncio.Queue:
+        if job_id not in self._queues:
+            raise KeyError(f"Unknown job: {job_id}")
+        return self._queues[job_id]
+
+    def push_event(self, job_id: str, event: dict) -> None:
+        queue = self._queues.get(job_id)
+        if queue is None:
+            logger.warning(f"push_event: no queue for job {job_id}, event dropped")
+            return
+        queue.put_nowait(event)

@@ -218,3 +218,23 @@ async def test_run_graph_empty_output():
     status = jm.get_status(job_id)
     assert status.state == "completed"
     assert status.result == "Research completed but produced no output."
+
+
+async def test_job_event_queue():
+    """JobManager creates an event queue per job and events can be pushed/consumed."""
+    jm = JobManager()
+    job_id = jm.create_job(query="test", tools=[])
+    queue = jm.get_event_queue(job_id)
+    assert queue is not None
+
+    jm.push_event(job_id, {"type": "node_started", "node": "clarifier"})
+    event = queue.get_nowait()
+    assert event["type"] == "node_started"
+    assert event["node"] == "clarifier"
+
+
+async def test_job_event_queue_unknown_job():
+    """get_event_queue raises KeyError for unknown job."""
+    jm = JobManager()
+    with pytest.raises(KeyError):
+        jm.get_event_queue("nonexistent")
