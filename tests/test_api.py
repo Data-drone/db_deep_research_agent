@@ -21,13 +21,24 @@ async def client(app):
         yield c
 
 
+class _MockGraph:
+    """Mock graph that supports both ainvoke and astream."""
+
+    def __init__(self, final_output="Test research result"):
+        self._final_output = final_output
+
+    async def ainvoke(self, state):
+        return {"final_output": self._final_output}
+
+    async def astream(self, state, stream_mode="updates"):
+        yield {"verifier": {"final_output": self._final_output}}
+
+
 @pytest.fixture
 def app_with_graph():
     """App with a mock graph that returns final_output."""
     a = create_app()
-    mock_graph = AsyncMock()
-    mock_graph.ainvoke.return_value = {"final_output": "Test research result"}
-    a.state.graph = mock_graph
+    a.state.graph = _MockGraph()
     a.state.mcp_manager = None
     a.state.config = None
     return a
@@ -132,10 +143,13 @@ async def test_cancel_research(graph_client):
     # Use a graph that hangs so we can cancel before completion
     app = graph_client._transport.app  # type: ignore[attr-defined]
     hang_event = asyncio.Event()
-    async def slow_invoke(state):
-        await hang_event.wait()
-        return {"final_output": "done"}
-    app.state.graph.ainvoke = slow_invoke
+
+    class _SlowGraph:
+        async def astream(self, state, stream_mode="updates"):
+            await hang_event.wait()
+            yield {"verifier": {"final_output": "done"}}
+
+    app.state.graph = _SlowGraph()
 
     submit = await graph_client.post("/api/research", json={
         "query": "test",
@@ -182,23 +196,25 @@ async def test_empty_query_rejected(client):
 
 async def test_run_graph_failure():
     """Graph exception should mark job as failed."""
-    mock_graph = AsyncMock()
-    mock_graph.ainvoke.side_effect = RuntimeError("LLM call failed")
+
+    class _FailGraph:
+        async def astream(self, state, stream_mode="updates"):
+            raise RuntimeError("LLM call failed")
+            yield  # make it an async generator  # noqa: unreachable
+
     jm = JobManager()
     job_id = jm.create_job(query="test", tools=[])
 
-    await _run_graph(mock_graph, jm, job_id, {})
+    await _run_graph(_FailGraph(), jm, job_id, {})
     assert jm.get_status(job_id).state == "failed"
 
 
 async def test_run_graph_empty_output():
     """Graph returning empty final_output should still complete."""
-    mock_graph = AsyncMock()
-    mock_graph.ainvoke.return_value = {"final_output": ""}
     jm = JobManager()
     job_id = jm.create_job(query="test", tools=[])
 
-    await _run_graph(mock_graph, jm, job_id, {})
+    await _run_graph(_MockGraph(final_output=""), jm, job_id, {})
     status = jm.get_status(job_id)
     assert status.state == "completed"
     assert status.result == "Research completed but produced no output."

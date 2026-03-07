@@ -2,19 +2,29 @@
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 
 from deep_research.api.app import create_app
+
+
+class _MockGraph:
+    """Mock graph that supports astream."""
+
+    def __init__(self, final_output="Mock research result"):
+        self._final_output = final_output
+
+    async def ainvoke(self, state):
+        return {"final_output": self._final_output}
+
+    async def astream(self, state, stream_mode="updates"):
+        yield {"verifier": {"final_output": self._final_output}}
 
 
 @pytest.fixture
 def app():
     """Create app with mock dependencies and a mock graph."""
     a = create_app(use_mocks=True)
-    mock_graph = AsyncMock()
-    mock_graph.ainvoke.return_value = {"final_output": "Mock research result"}
-    a.state.graph = mock_graph
+    a.state.graph = _MockGraph()
     a.state.mcp_manager = None
     a.state.config = None
     return a
@@ -71,10 +81,13 @@ class TestUserResearchFlow:
         # Use a slow graph so we can cancel before completion
         app = client._transport.app  # type: ignore[attr-defined]
         hang_event = asyncio.Event()
-        async def slow_invoke(state):
-            await hang_event.wait()
-            return {"final_output": "done"}
-        app.state.graph.ainvoke = slow_invoke
+
+        class _SlowGraph:
+            async def astream(self, state, stream_mode="updates"):
+                await hang_event.wait()
+                yield {"verifier": {"final_output": "done"}}
+
+        app.state.graph = _SlowGraph()
 
         submit = await client.post(
             "/api/research",

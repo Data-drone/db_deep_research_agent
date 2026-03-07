@@ -38,15 +38,34 @@ async def _run_graph(
     """Execute the research graph in the background, updating job state."""
     try:
         job_manager.update_state(job_id, "running")
-        result = await graph.ainvoke(initial_state)
-        final_output = result.get("final_output", "")
-        if not final_output:
-            final_output = "Research completed but produced no output."
+
+        # Try streaming for node-level progress tracking
+        if hasattr(graph, "astream"):
+            final_state = None
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                for node_name in event:
+                    logger.info(f"Job {job_id}: completed node '{node_name}'")
+                    job_manager.update_state(
+                        job_id, "running", current_node=node_name
+                    )
+                    final_state = event[node_name]
+
+            final_output = ""
+            if final_state and isinstance(final_state, dict):
+                final_output = final_state.get("final_output", "")
+            if not final_output:
+                final_output = "Research completed but produced no output."
+        else:
+            result = await graph.ainvoke(initial_state)
+            final_output = result.get("final_output", "")
+            if not final_output:
+                final_output = "Research completed but produced no output."
+
         job_manager.update_state(job_id, "completed", result=final_output)
-    except Exception:
+    except Exception as exc:
         logger.exception(f"Graph execution failed for job {job_id}")
         job_manager.update_state(
-            job_id, "failed", error="Research execution failed"
+            job_id, "failed", error=f"Research execution failed: {exc}"
         )
 
 
@@ -131,6 +150,8 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             "job_id": job_id,
             "status": status.state,
             "result": status.result,
+            "current_node": status.current_node,
+            "error": status.error,
         }
 
     @app.delete("/api/research/{job_id}")
