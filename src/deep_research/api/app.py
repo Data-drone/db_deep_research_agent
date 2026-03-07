@@ -41,6 +41,10 @@ async def _run_graph(
     try:
         job_manager.update_state(job_id, "running")
 
+        # Inject job context so nodes (e.g. synthesizer) can push token events
+        initial_state["_job_manager"] = job_manager
+        initial_state["_job_id"] = job_id
+
         # Try streaming for node-level progress tracking
         if hasattr(graph, "astream"):
             accumulated_state: dict = {}

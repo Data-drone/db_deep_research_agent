@@ -279,6 +279,23 @@ async def test_sse_stream_unknown_job(client):
     assert response.status_code == 404
 
 
+async def test_run_graph_injects_job_context():
+    """_run_graph adds _job_manager and _job_id to state before calling graph."""
+    jm = JobManager()
+    job_id = jm.create_job(query="test", tools=[])
+    captured_state = {}
+
+    class _CaptureGraph:
+        async def astream(self, state, stream_mode="updates"):
+            captured_state.update(state)
+            yield {"synthesizer": {"final_output": "done"}}
+            yield {"verifier": {"verification_result": None}}
+
+    await _run_graph(_CaptureGraph(), jm, job_id, {"user_query": "test"})
+    assert captured_state["_job_manager"] is jm
+    assert captured_state["_job_id"] == job_id
+
+
 async def test_run_graph_pushes_events():
     """_run_graph pushes node_started events and a completed event to the queue."""
     jm = JobManager()
