@@ -3,6 +3,6 @@ command:
   - "app.py"
 env:
   - name: LLM_ENDPOINT_NAME
-    value: "databricks-claude-sonnet-4-5"
+    value: "databricks-claude-sonnet-4-6"
   - name: PYTHONPATH
     value: "src"
