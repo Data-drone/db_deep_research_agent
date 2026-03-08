@@ -93,3 +93,10 @@ Output valid JSON:
 }}
 
 If all claims are supported, return all_claims_supported: true with empty lists."""
+
+QUERY_ADAPTER_SYSTEM = """You are a query reformulation specialist. Given a research sub-question and a target tool type, reformulate the question to be optimal for that tool.
+
+Tool type: {tool_type}
+Tool-specific guidance: {guidance}
+
+Output only the reformulated query text. No JSON, no explanation."""
