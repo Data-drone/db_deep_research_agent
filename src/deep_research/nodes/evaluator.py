@@ -79,6 +79,30 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
         budget_exhausted=budget_exhausted,
     )
 
+    # Compute source diversity (backup if LLM doesn't return it)
+    single_source_sqs = []
+    for sq in plan:
+        sq_evidence = [e for e in evidence if e.evidence_id in sq.evidence_ids]
+        unique_tools = set(e.tool_that_produced_it for e in sq_evidence)
+        if len(sq_evidence) > 0 and len(unique_tools) <= 1:
+            tool_name = next(iter(unique_tools)) if unique_tools else "unknown"
+            single_source_sqs.append(f"{sq.subquestion_id} relies only on {tool_name}")
+            logger.info(f"Single source: {sq.subquestion_id} uses only {unique_tools}")
+
+    if single_source_sqs:
+        logger.info(
+            "Source diversity warning: %d sub-question(s) rely on a single tool",
+            len(single_source_sqs),
+        )
+
+    # Log LLM-provided source diversity info if present
+    llm_diversity_score = result.get("source_diversity_score")
+    llm_single_source = result.get("single_source_questions", [])
+    if llm_diversity_score is not None:
+        logger.info("LLM source_diversity_score: %.2f", llm_diversity_score)
+    if llm_single_source:
+        logger.info("LLM single_source_questions: %s", llm_single_source)
+
     # Apply per-sub-question verdicts from the LLM
     verdicts = {v["id"]: v for v in result.get("sub_question_verdicts", [])}
     for sq in plan:

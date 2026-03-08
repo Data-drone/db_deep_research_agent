@@ -581,6 +581,63 @@ async def test_evaluator_partially_answered_verdict():
 
 
 @pytest.mark.asyncio
+async def test_evaluator_logs_source_diversity():
+    """Verify that the evaluator handles single-source sub-questions and
+    processes the LLM's source diversity fields without errors."""
+    model = make_mock_model(json.dumps({
+        "sufficiency_score": 0.7,
+        "missing_facets": ["Need data from additional sources"],
+        "recommended_actions": ["search vs for corroboration"],
+        "decision": "stop",
+        "reason": "Answered but low source diversity",
+        "sub_question_verdicts": [
+            {"id": "sq-1", "verdict": "answered", "reason": "Answered from genie only"},
+            {"id": "sq-2", "verdict": "answered", "reason": "Answered from genie only"},
+        ],
+        "source_diversity_score": 0.2,
+        "single_source_questions": [
+            "sq-1 relies only on genie",
+            "sq-2 relies only on genie",
+        ],
+    }))
+    # All evidence comes from a single tool ("genie")
+    ev1 = Evidence(
+        evidence_id="ev-1", source_id="genie", source_type="query",
+        title="Revenue", uri=None, snippet="Q3 revenue was $12.4M",
+        confidence=0.9, freshness="2026-01-01",
+        tool_that_produced_it="genie", tool_call_id="tc-1", iteration=1,
+    )
+    ev2 = Evidence(
+        evidence_id="ev-2", source_id="genie", source_type="query",
+        title="Growth", uri=None, snippet="Revenue grew 15% YoY",
+        confidence=0.85, freshness="2026-01-01",
+        tool_that_produced_it="genie", tool_call_id="tc-2", iteration=1,
+    )
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [
+        SubQuestion(subquestion_id="sq-1", question="What was Q3 revenue?",
+                    assigned_tools=["genie"], evidence_ids=["ev-1"]),
+        SubQuestion(subquestion_id="sq-2", question="How did revenue grow?",
+                    assigned_tools=["genie"], evidence_ids=["ev-2"]),
+    ]
+    state["evidence"] = [ev1, ev2]
+
+    result = await evaluator_node(state, model=model)
+
+    # Evaluator should still return valid results
+    assert result["evaluator_decision"].decision == "stop"
+    assert result["sufficiency_score"] == 0.7
+    assert result["research_plan"][0].status == "answered"
+    assert result["research_plan"][1].status == "answered"
+
+    # The prompt should contain source diversity guidance
+    call_args = model.ainvoke.call_args[0][0]
+    system_prompt = call_args[0]["content"]
+    assert "source diversity" in system_prompt.lower()
+    assert "single_source_questions" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_evaluator_full_evidence_not_truncated():
     """Verify the model receives full evidence text, not truncated to 200 chars."""
     long_snippet = "A" * 500  # 500-char snippet, previously would be truncated to 200

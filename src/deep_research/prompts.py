@@ -55,6 +55,11 @@ For EACH sub-question, provide a verdict:
 - "partially_answered": Some evidence exists but key aspects are missing
 - "unanswered": No relevant evidence found
 
+Also assess source diversity:
+- For each sub-question, check if evidence comes from multiple different tools
+- Flag sub-questions where all evidence comes from a single source
+- Higher source diversity = more reliable findings
+
 Output valid JSON:
 {{
   "sufficiency_score": <float 0.0-1.0>,
@@ -64,7 +69,9 @@ Output valid JSON:
   "missing_facets": ["<what is still unknown>"],
   "recommended_actions": ["<specific follow-up tool calls>"],
   "decision": "continue" | "stop",
-  "reason": "<overall assessment>"
+  "reason": "<overall assessment>",
+  "source_diversity_score": <float 0.0-1.0>,
+  "single_source_questions": ["<sq_id> relies only on <tool_name>"]
 }}
 
 Stop if: sufficiency_score >= 0.8, or all sub-questions are answered, or at max iterations.
