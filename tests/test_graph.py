@@ -12,7 +12,7 @@ def test_graph_has_expected_nodes():
     graph = build_research_graph(model=None, mcp_manager=None)
     node_names = set(graph.get_graph().nodes.keys())
     expected = {
-        "clarifier", "planner", "authorizer", "researcher",
+        "clarifier", "planner", "authorizer", "query_adapter", "researcher",
         "normalizer", "evaluator", "compressor", "synthesizer", "verifier",
     }
     assert expected.issubset(node_names)
@@ -27,7 +27,18 @@ def test_graph_has_expected_nodes_with_critic():
     graph = build_research_graph(model=None, mcp_manager=None, critic_model=None)
     node_names = set(graph.get_graph().nodes.keys())
     expected = {
-        "clarifier", "planner", "authorizer", "researcher",
+        "clarifier", "planner", "authorizer", "query_adapter", "researcher",
         "normalizer", "evaluator", "compressor", "synthesizer", "verifier",
     }
     assert expected.issubset(node_names)
+
+
+def test_graph_query_adapter_between_authorizer_and_researcher():
+    """Verify query_adapter sits between authorizer and researcher in the graph."""
+    graph = build_research_graph(model=None, mcp_manager=None)
+    g = graph.get_graph()
+    # Check edges: authorizer -> query_adapter -> researcher
+    authorizer_edges = [e.target for e in g.edges if e.source == "authorizer"]
+    query_adapter_edges = [e.target for e in g.edges if e.source == "query_adapter"]
+    assert "query_adapter" in authorizer_edges
+    assert "researcher" in query_adapter_edges

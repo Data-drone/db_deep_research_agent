@@ -15,6 +15,7 @@ from deep_research.nodes import (
     evaluator_node,
     normalizer_node,
     planner_node,
+    query_adapter_node,
     researcher_node,
     synthesizer_node,
     verifier_node,
@@ -48,6 +49,7 @@ def build_research_graph(
     graph.add_node("clarifier", partial(clarifier_node, model=model))
     graph.add_node("planner", partial(planner_node, model=model))
     graph.add_node("authorizer", partial(authorizer_node, model=model))
+    graph.add_node("query_adapter", partial(query_adapter_node, model=model))
     graph.add_node("researcher", partial(researcher_node, model=model, mcp_manager=mcp_manager))
     graph.add_node("normalizer", partial(normalizer_node, model=model))
     graph.add_node("compressor", partial(compressor_node, model=model))
@@ -61,7 +63,8 @@ def build_research_graph(
     graph.set_entry_point("clarifier")
     graph.add_edge("clarifier", "planner")
     graph.add_edge("planner", "authorizer")
-    graph.add_edge("authorizer", "researcher")
+    graph.add_edge("authorizer", "query_adapter")
+    graph.add_edge("query_adapter", "researcher")
     graph.add_edge("researcher", "normalizer")
     graph.add_edge("normalizer", "evaluator")
     graph.add_conditional_edges("evaluator", _should_continue, {
