@@ -301,11 +301,20 @@ def ka_server_config():
     }
 
 
+def _make_mock_workspace_client(auth_headers=None):
+    """Create a mock WorkspaceClient with authenticate() returning given headers."""
+    mock_ws = MagicMock()
+    mock_ws.config.authenticate.return_value = auth_headers or {"Authorization": "Bearer fake-token"}
+    return mock_ws
+
+
 @pytest.mark.asyncio
 async def test_call_tool_knowledge_assistant(ka_server_config):
     """call_tool on a knowledge_assistant uses httpx POST, not MCP client."""
     import json as _json
     manager = MCPClientManager(ka_server_config, token="test")
+
+    mock_ws = _make_mock_workspace_client()
 
     # Manually set up connection (skip connect_all which would hit real endpoint)
     manager._connections["knowledge_assistant"] = {
@@ -314,7 +323,7 @@ async def test_call_tool_knowledge_assistant(ka_server_config):
         "query_tool": "knowledge_assistant_knowledge_assistant",
         "poll_tool": None,
         "config": ka_server_config["knowledge_assistant"],
-        "auth_headers": {"Authorization": "Bearer fake-token"},
+        "workspace_client": mock_ws,
     }
 
     ka_response = {
@@ -345,6 +354,8 @@ async def test_call_tool_knowledge_assistant(ka_server_config):
     mock_client_instance.post.assert_called_once()
     call_args = mock_client_instance.post.call_args
     assert call_args[1]["json"]["input"][0]["content"] == "What was ANZ revenue?"
+    # Verify fresh auth headers were fetched (not cached)
+    mock_ws.config.authenticate.assert_called()
 
 
 @pytest.mark.asyncio
@@ -352,13 +363,15 @@ async def test_call_tool_knowledge_assistant_error(ka_server_config):
     """call_tool on KA raises RuntimeError on non-200 response."""
     manager = MCPClientManager(ka_server_config, token="test")
 
+    mock_ws = _make_mock_workspace_client()
+
     manager._connections["knowledge_assistant"] = {
         "client": None,
         "tools": [_make_mock_tool("knowledge_assistant_knowledge_assistant")],
         "query_tool": "knowledge_assistant_knowledge_assistant",
         "poll_tool": None,
         "config": ka_server_config["knowledge_assistant"],
-        "auth_headers": {},
+        "workspace_client": mock_ws,
     }
 
     mock_resp = MagicMock()
@@ -375,3 +388,46 @@ async def test_call_tool_knowledge_assistant_error(ka_server_config):
             await manager.call_tool(
                 "knowledge_assistant", "query", {"query": "test"}
             )
+
+
+@pytest.mark.asyncio
+async def test_call_tool_knowledge_assistant_no_ws(ka_server_config):
+    """call_tool on KA raises RuntimeError when no WorkspaceClient stored."""
+    manager = MCPClientManager(ka_server_config, token="test")
+
+    manager._connections["knowledge_assistant"] = {
+        "client": None,
+        "tools": [_make_mock_tool("knowledge_assistant_knowledge_assistant")],
+        "query_tool": "knowledge_assistant_knowledge_assistant",
+        "poll_tool": None,
+        "config": ka_server_config["knowledge_assistant"],
+        "workspace_client": None,
+    }
+
+    with pytest.raises(RuntimeError, match="No WorkspaceClient available"):
+        await manager.call_tool(
+            "knowledge_assistant", "query", {"query": "test"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_call_tool_knowledge_assistant_empty_auth(ka_server_config):
+    """call_tool on KA raises RuntimeError when authenticate() returns empty."""
+    manager = MCPClientManager(ka_server_config, token="test")
+
+    mock_ws = MagicMock()
+    mock_ws.config.authenticate.return_value = {}
+
+    manager._connections["knowledge_assistant"] = {
+        "client": None,
+        "tools": [_make_mock_tool("knowledge_assistant_knowledge_assistant")],
+        "query_tool": "knowledge_assistant_knowledge_assistant",
+        "poll_tool": None,
+        "config": ka_server_config["knowledge_assistant"],
+        "workspace_client": mock_ws,
+    }
+
+    with pytest.raises(RuntimeError, match="Could not obtain auth headers"):
+        await manager.call_tool(
+            "knowledge_assistant", "query", {"query": "test"}
+        )

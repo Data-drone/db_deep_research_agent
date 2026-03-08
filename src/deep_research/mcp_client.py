@@ -186,6 +186,26 @@ class MCPClientManager:
             "config": cfg,
         }
 
+    def _get_fresh_auth_headers(self, ws: Any) -> dict[str, str]:
+        """Get fresh authentication headers from a WorkspaceClient.
+
+        The SDK's authenticate() handles token refresh automatically for
+        OAuth M2M (client credentials) — each call returns a valid bearer
+        token, requesting a new one from the IdP when the cached one expires.
+        """
+        try:
+            headers = ws.config.authenticate()
+            if not headers:
+                logger.warning(
+                    "WorkspaceClient.authenticate() returned empty headers. "
+                    "Check DATABRICKS_CLIENT_ID/DATABRICKS_CLIENT_SECRET or DATABRICKS_TOKEN."
+                )
+                return {}
+            return headers
+        except Exception:
+            logger.warning("Failed to get auth headers from WorkspaceClient", exc_info=True)
+            return {}
+
     async def _connect_knowledge_assistant(
         self, name: str, cfg: MCPServerConfig, ws: Any
     ) -> None:
@@ -193,25 +213,30 @@ class MCPClientManager:
 
         KA endpoints are not MCP servers — they use the Responses API format
         at /serving-endpoints/{name}/invocations.
+
+        We store the WorkspaceClient reference so that each call fetches
+        fresh auth headers — OAuth M2M tokens expire and must be refreshed.
         """
-        # Get auth headers from WorkspaceClient
-        auth_headers: dict[str, str] = {}
-        try:
-            auth_headers = ws.config.authenticate()
-        except Exception:
-            logger.warning(f"Could not get auth headers for KA: {name}")
+        # Verify auth works *now* — fail fast if credentials are missing
+        auth_headers = self._get_fresh_auth_headers(ws)
 
         # Verify endpoint is reachable with a lightweight call
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                cfg.url,
-                headers={**auth_headers, "Content-Type": "application/json"},
-                json={"input": [{"role": "user", "content": "ping"}]},
-            )
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"KA endpoint returned {resp.status_code}: {resp.text[:200]}"
+        if auth_headers:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    cfg.url,
+                    headers={**auth_headers, "Content-Type": "application/json"},
+                    json={"input": [{"role": "user", "content": "ping"}]},
                 )
+                if resp.status_code != 200:
+                    raise RuntimeError(
+                        f"KA endpoint returned {resp.status_code}: {resp.text[:200]}"
+                    )
+        else:
+            logger.warning(
+                f"Skipping KA endpoint health check for {name} — no auth headers. "
+                "KA calls will attempt fresh auth at request time."
+            )
 
         from types import SimpleNamespace
         self._connections[name] = {
@@ -220,7 +245,7 @@ class MCPClientManager:
             "query_tool": f"knowledge_assistant_{name}",
             "poll_tool": None,
             "config": cfg,
-            "auth_headers": auth_headers,
+            "workspace_client": ws,  # Stored for fresh auth on each call
         }
 
     async def call_tool(
@@ -276,10 +301,22 @@ class MCPClientManager:
     ) -> dict[str, Any]:
         """Call a Knowledge Assistant serving endpoint.
 
+        Fetches fresh auth headers on every call to handle OAuth token expiry.
         Sends the query via the Responses API format and extracts the text response.
         """
         cfg = conn["config"]
-        auth_headers = conn.get("auth_headers", {})
+        ws = conn.get("workspace_client")
+        if ws is None:
+            raise RuntimeError(
+                f"No WorkspaceClient available for KA server: {server_name}"
+            )
+        auth_headers = self._get_fresh_auth_headers(ws)
+        if not auth_headers:
+            raise RuntimeError(
+                f"Could not obtain auth headers for KA: {server_name}. "
+                "Ensure DATABRICKS_CLIENT_ID/DATABRICKS_CLIENT_SECRET or "
+                "DATABRICKS_TOKEN is configured."
+            )
         query = arguments.get("query", "")
 
         logger.info(f"Calling Knowledge Assistant: {server_name} with query: {query[:100]}")
