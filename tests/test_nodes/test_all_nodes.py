@@ -310,16 +310,26 @@ async def test_evaluator_stop():
         "recommended_actions": [],
         "decision": "stop",
         "reason": "All answered",
+        "sub_question_verdicts": [
+            {"id": "sq-1", "verdict": "answered", "reason": "Fully addressed"}
+        ],
     }))
+    ev = Evidence(
+        evidence_id="ev-1", source_id="g", source_type="query",
+        title="T", uri=None, snippet="data about Q",
+        confidence=0.85, freshness="2026-01-01",
+        tool_that_produced_it="g", tool_call_id="tc-1", iteration=1,
+    )
     state = create_initial_state(user_query="test", selected_tools=[])
     state["research_plan"] = [
         SubQuestion(subquestion_id="sq-1", question="Q?", assigned_tools=["g"], evidence_ids=["ev-1"])
     ]
-    state["evidence"] = [MagicMock(source_id="g", snippet="data")]
+    state["evidence"] = [ev]
 
     result = await evaluator_node(state, model=model)
     assert result["evaluator_decision"].decision == "stop"
     assert result["sufficiency_score"] == 0.9
+    assert result["research_plan"][0].status == "answered"
 
 
 @pytest.mark.asyncio
@@ -330,6 +340,9 @@ async def test_evaluator_continue():
         "recommended_actions": ["search vs"],
         "decision": "continue",
         "reason": "Incomplete",
+        "sub_question_verdicts": [
+            {"id": "sq-1", "verdict": "unanswered", "reason": "No evidence yet"}
+        ],
     }))
     state = create_initial_state(user_query="test", selected_tools=[])
     state["research_plan"] = [
@@ -339,6 +352,8 @@ async def test_evaluator_continue():
 
     result = await evaluator_node(state, model=model)
     assert result["evaluator_decision"].decision == "continue"
+    # "unanswered" maps back to "pending"
+    assert result["research_plan"][0].status == "pending"
 
 
 @pytest.mark.asyncio
@@ -349,6 +364,7 @@ async def test_evaluator_budget_forces_stop():
         "recommended_actions": [],
         "decision": "continue",
         "reason": "Need more",
+        "sub_question_verdicts": [],
     }))
     state = create_initial_state(user_query="test", selected_tools=[])
     state["research_plan"] = []
@@ -359,6 +375,113 @@ async def test_evaluator_budget_forces_stop():
     result = await evaluator_node(state, model=model)
     assert result["evaluator_decision"].decision == "stop"
     assert result["evaluator_decision"].budget_exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_evaluator_per_sq_verdicts():
+    """Verify sub-questions get correct statuses from LLM verdicts."""
+    model = make_mock_model(json.dumps({
+        "sufficiency_score": 0.7,
+        "missing_facets": [],
+        "recommended_actions": [],
+        "decision": "stop",
+        "reason": "Mostly answered",
+        "sub_question_verdicts": [
+            {"id": "sq-1", "verdict": "answered", "reason": "Fully covered"},
+            {"id": "sq-2", "verdict": "unanswered", "reason": "No evidence"},
+            {"id": "sq-3", "verdict": "partially_answered", "reason": "Missing details"},
+        ],
+    }))
+    ev1 = Evidence(
+        evidence_id="ev-1", source_id="g", source_type="query",
+        title="T1", uri=None, snippet="answer to Q1",
+        confidence=0.9, freshness="2026-01-01",
+        tool_that_produced_it="g", tool_call_id="tc-1", iteration=1,
+    )
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [
+        SubQuestion(subquestion_id="sq-1", question="Q1?", assigned_tools=["g"], evidence_ids=["ev-1"]),
+        SubQuestion(subquestion_id="sq-2", question="Q2?", assigned_tools=["g"]),
+        SubQuestion(subquestion_id="sq-3", question="Q3?", assigned_tools=["g"], evidence_ids=["ev-1"]),
+    ]
+    state["evidence"] = [ev1]
+
+    result = await evaluator_node(state, model=model)
+    plan = result["research_plan"]
+    assert plan[0].status == "answered"
+    assert plan[1].status == "pending"  # "unanswered" maps to "pending"
+    assert plan[2].status == "partially_answered"
+
+
+@pytest.mark.asyncio
+async def test_evaluator_partially_answered_verdict():
+    """Verify partially_answered status is properly applied."""
+    model = make_mock_model(json.dumps({
+        "sufficiency_score": 0.5,
+        "missing_facets": ["detailed breakdown"],
+        "recommended_actions": ["search for more details"],
+        "decision": "continue",
+        "reason": "Partially answered",
+        "sub_question_verdicts": [
+            {"id": "sq-1", "verdict": "partially_answered", "reason": "Has data but missing breakdown"},
+        ],
+    }))
+    ev = Evidence(
+        evidence_id="ev-1", source_id="g", source_type="query",
+        title="T", uri=None, snippet="partial data",
+        confidence=0.6, freshness="2026-01-01",
+        tool_that_produced_it="g", tool_call_id="tc-1", iteration=1,
+    )
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [
+        SubQuestion(subquestion_id="sq-1", question="Q?", assigned_tools=["g"],
+                    evidence_ids=["ev-1"], status="in_progress"),
+    ]
+    state["evidence"] = [ev]
+    # Need iteration > 0 and new evidence to allow "continue"
+    state["iteration_count"] = 1
+    # Add evidence with iteration=1 so "no new evidence" check passes
+    ev.iteration = 1
+
+    result = await evaluator_node(state, model=model)
+    assert result["evaluator_decision"].decision == "continue"
+    assert result["research_plan"][0].status == "partially_answered"
+
+
+@pytest.mark.asyncio
+async def test_evaluator_full_evidence_not_truncated():
+    """Verify the model receives full evidence text, not truncated to 200 chars."""
+    long_snippet = "A" * 500  # 500-char snippet, previously would be truncated to 200
+    model = make_mock_model(json.dumps({
+        "sufficiency_score": 0.8,
+        "missing_facets": [],
+        "recommended_actions": [],
+        "decision": "stop",
+        "reason": "Sufficient",
+        "sub_question_verdicts": [
+            {"id": "sq-1", "verdict": "answered", "reason": "Good"}
+        ],
+    }))
+    ev = Evidence(
+        evidence_id="ev-1", source_id="g", source_type="query",
+        title="T", uri=None, snippet=long_snippet,
+        confidence=0.9, freshness="2026-01-01",
+        tool_that_produced_it="g", tool_call_id="tc-1", iteration=1,
+    )
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [
+        SubQuestion(subquestion_id="sq-1", question="Q?", assigned_tools=["g"], evidence_ids=["ev-1"])
+    ]
+    state["evidence"] = [ev]
+
+    result = await evaluator_node(state, model=model)
+
+    # Inspect the prompt that was sent to the model
+    call_args = model.ainvoke.call_args[0][0]
+    system_prompt = call_args[0]["content"]
+    # The full 500-char snippet should appear in the prompt, not truncated
+    assert long_snippet in system_prompt
+    assert "A" * 500 in system_prompt
 
 
 # --- Compressor ---

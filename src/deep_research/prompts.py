@@ -43,6 +43,33 @@ Output valid JSON:
 
 Stop if: sufficiency_score >= 0.8, or all sub-questions are answered, or we are at max iterations."""
 
+EVALUATOR_SYSTEM_V2 = """You are a research evaluator using deep analysis. Assess whether collected evidence sufficiently answers each sub-question.
+
+{sub_question_details}
+
+Total evidence items: {evidence_count}
+Current iteration: {iteration} / {max_iterations}
+
+For EACH sub-question, provide a verdict:
+- "answered": Evidence fully addresses the question
+- "partially_answered": Some evidence exists but key aspects are missing
+- "unanswered": No relevant evidence found
+
+Output valid JSON:
+{{
+  "sufficiency_score": <float 0.0-1.0>,
+  "sub_question_verdicts": [
+    {{"id": "<subquestion_id>", "verdict": "answered"|"partially_answered"|"unanswered", "reason": "<brief reason>"}}
+  ],
+  "missing_facets": ["<what is still unknown>"],
+  "recommended_actions": ["<specific follow-up tool calls>"],
+  "decision": "continue" | "stop",
+  "reason": "<overall assessment>"
+}}
+
+Stop if: sufficiency_score >= 0.8, or all sub-questions are answered, or at max iterations.
+Continue if: partially_answered or unanswered sub-questions remain and budget allows."""
+
 COMPRESSOR_SYSTEM = """You are a research compressor. Given a list of evidence items, produce a structured summary.
 
 Preserve:
