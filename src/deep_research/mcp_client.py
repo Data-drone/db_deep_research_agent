@@ -40,29 +40,36 @@ def _parse_genie_async_response(text: str) -> dict[str, str] | None:
     Returns dict with conversation_id and message_id, or None if not a polling response.
     """
     if not any(status in text for status in (
-        "FILTERING_CONTEXT", "EXECUTING_QUERY", "is being processed"
+        "FILTERING_CONTEXT", "EXECUTING_QUERY", "is being processed",
+        "still processing", "poll_response",
     )):
         return None
 
-    conv_match = re.search(r"conversation_id[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9_-]+)", text)
-    msg_match = re.search(r"message_id[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9_-]+)", text)
+    # Try JSON parsing first (Genie returns structured JSON via MCP)
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            # Handle both camelCase (from Genie) and snake_case
+            conv_id = data.get("conversationId") or data.get("conversation_id", "")
+            msg_id = data.get("messageId") or data.get("message_id", "")
+            if conv_id and msg_id:
+                return {"conversation_id": conv_id, "message_id": msg_id}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Regex fallback for both camelCase and snake_case in text
+    conv_match = re.search(
+        r"(?:conversation_id|conversationId)[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9_-]+)", text
+    )
+    msg_match = re.search(
+        r"(?:message_id|messageId)[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9_-]+)", text
+    )
 
     if conv_match and msg_match:
         return {
             "conversation_id": conv_match.group(1),
             "message_id": msg_match.group(1),
         }
-
-    # Try JSON parsing as fallback
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict) and "conversation_id" in data:
-            return {
-                "conversation_id": data["conversation_id"],
-                "message_id": data.get("message_id", ""),
-            }
-    except (json.JSONDecodeError, TypeError):
-        pass
 
     return None
 
@@ -190,7 +197,7 @@ class MCPClientManager:
         # Get auth headers from WorkspaceClient
         auth_headers: dict[str, str] = {}
         try:
-            ws.config.authenticate(auth_headers)
+            auth_headers = ws.config.authenticate()
         except Exception:
             logger.warning(f"Could not get auth headers for KA: {name}")
 
