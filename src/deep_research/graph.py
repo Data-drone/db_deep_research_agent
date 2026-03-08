@@ -36,6 +36,15 @@ def _should_continue(state: ResearchState) -> str:
     return "compressor"
 
 
+def _should_revise(state: ResearchState) -> str:
+    """Routing function after verifier: revise or finish."""
+    vr = state.get("verification_result")
+    attempts = state.get("verification_attempts", 0)
+    if vr and not vr.all_claims_supported and attempts < 2:
+        return "planner"
+    return END
+
+
 def build_research_graph(
     model: Any,
     mcp_manager: MCPClientManager | None,
@@ -76,6 +85,9 @@ def build_research_graph(
     })
     graph.add_edge("compressor", "synthesizer")
     graph.add_edge("synthesizer", "verifier")
-    graph.add_edge("verifier", END)
+    graph.add_conditional_edges("verifier", _should_revise, {
+        "planner": "planner",
+        END: END,
+    })
 
     return graph.compile()

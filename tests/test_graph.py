@@ -52,3 +52,12 @@ def test_graph_scorer_between_normalizer_and_evaluator():
     scorer_edges = [e.target for e in g.edges if e.source == "scorer"]
     assert "scorer" in normalizer_edges
     assert "evaluator" in scorer_edges
+
+
+def test_graph_verifier_feedback_loop():
+    """Verify verifier has conditional edges back to planner or to END."""
+    graph = build_research_graph(model=None, mcp_manager=None)
+    g = graph.get_graph()
+    verifier_edges = [e.target for e in g.edges if e.source == "verifier"]
+    assert "planner" in verifier_edges, "verifier should have edge back to planner"
+    assert "__end__" in verifier_edges, "verifier should have edge to END"
