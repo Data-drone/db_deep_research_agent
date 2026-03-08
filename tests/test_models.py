@@ -102,6 +102,34 @@ def test_sub_question():
     assert sq.iteration_created == 0
 
 
+def test_sub_question_adapted_queries_default():
+    """SubQuestion should default to an empty adapted_queries dict."""
+    sq = SubQuestion(
+        subquestion_id="sq-010",
+        question="What was Q3 revenue?",
+        assigned_tools=["genie_sales"],
+    )
+    assert sq.adapted_queries == {}
+    assert isinstance(sq.adapted_queries, dict)
+
+
+def test_sub_question_adapted_queries_populated():
+    """SubQuestion should accept populated adapted_queries mapping tool names to queries."""
+    adapted = {
+        "genie_sales": "SELECT quarterly revenue for Q3 2025",
+        "vector_search": "Q3 2025 revenue figures and growth rate",
+    }
+    sq = SubQuestion(
+        subquestion_id="sq-011",
+        question="What was Q3 revenue?",
+        assigned_tools=["genie_sales", "vector_search"],
+        adapted_queries=adapted,
+    )
+    assert sq.adapted_queries == adapted
+    assert sq.adapted_queries["genie_sales"] == "SELECT quarterly revenue for Q3 2025"
+    assert sq.adapted_queries.get("nonexistent_tool", sq.question) == "What was Q3 revenue?"
+
+
 def test_sub_question_status_transition():
     sq = SubQuestion(
         subquestion_id="sq-001",

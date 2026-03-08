@@ -34,6 +34,7 @@ class SubQuestion:
     answer_summary: str | None = None
     evidence_ids: list[str] = field(default_factory=list)
     iteration_created: int = 0
+    adapted_queries: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
