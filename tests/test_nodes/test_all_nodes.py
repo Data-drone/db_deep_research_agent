@@ -41,20 +41,20 @@ def make_mock_mcp():
 # --- Clarifier ---
 
 @pytest.mark.asyncio
-async def test_clarifier_clear_query():
-    model = make_mock_model('{"clarification_needed": false, "clarified_query": "What was Q3 revenue?"}')
+async def test_clarifier_refines_query():
+    model = make_mock_model('{"clarified_query": "What was Q3 2025 revenue for ACME Corp?"}')
     state = create_initial_state(user_query="What was Q3 revenue?", selected_tools=["genie"])
     result = await clarifier_node(state, model=model)
-    assert result["clarification_needed"] is False
-    assert result["clarified_query"] == "What was Q3 revenue?"
+    assert result["clarified_query"] == "What was Q3 2025 revenue for ACME Corp?"
+    assert "clarification_needed" not in result
 
 
 @pytest.mark.asyncio
-async def test_clarifier_ambiguous_query():
-    model = make_mock_model('{"clarification_needed": true, "question": "Which quarter do you mean?"}')
-    state = create_initial_state(user_query="What was revenue?", selected_tools=["genie"])
+async def test_clarifier_precise_query_passes_through():
+    model = make_mock_model('{"clarified_query": "What was Q3 2025 revenue?"}')
+    state = create_initial_state(user_query="What was Q3 2025 revenue?", selected_tools=["genie"])
     result = await clarifier_node(state, model=model)
-    assert result["clarification_needed"] is True
+    assert result["clarified_query"] == "What was Q3 2025 revenue?"
 
 
 @pytest.mark.asyncio
@@ -62,8 +62,8 @@ async def test_clarifier_parse_error_fallback():
     model = make_mock_model("this is not json")
     state = create_initial_state(user_query="test query", selected_tools=[])
     result = await clarifier_node(state, model=model)
-    assert result["clarification_needed"] is False
     assert result["clarified_query"] == "test query"
+    assert "clarification_needed" not in result
 
 
 # --- Planner ---
@@ -235,6 +235,48 @@ async def test_authorizer_maps_tools():
     result = await authorizer_node(state, model=model)
     assert "genie" in result["tool_assignments"]
     assert "vs" in result["tool_assignments"]
+
+
+@pytest.mark.asyncio
+async def test_authorizer_safe_tools_always_approved():
+    """Safe-tier tools (genie, vs, vector_search) always pass through."""
+    model = make_mock_model("")
+    sq = SubQuestion(
+        subquestion_id="sq-1", question="Q?",
+        assigned_tools=["genie_sales", "vector_search_kb"],
+    )
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [sq]
+    result = await authorizer_node(state, model=model)
+    assert sq.assigned_tools == ["genie_sales", "vector_search_kb"]
+    assert "genie_sales" in result["tool_assignments"]
+
+
+@pytest.mark.asyncio
+async def test_authorizer_restricted_tools_approved_with_logging():
+    """Restricted-tier tools (knowledge) are approved but logged."""
+    model = make_mock_model("")
+    sq = SubQuestion(
+        subquestion_id="sq-1", question="Q?",
+        assigned_tools=["knowledge_assistant"],
+    )
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [sq]
+    result = await authorizer_node(state, model=model)
+    assert "knowledge_assistant" in sq.assigned_tools
+    assert "knowledge_assistant" in result["tool_assignments"]
+
+
+@pytest.mark.asyncio
+async def test_authorizer_returns_updated_plan():
+    """Authorizer returns the research_plan in its output."""
+    model = make_mock_model("")
+    sq = SubQuestion(subquestion_id="sq-1", question="Q?", assigned_tools=["genie"])
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["research_plan"] = [sq]
+    result = await authorizer_node(state, model=model)
+    assert "research_plan" in result
+    assert len(result["research_plan"]) == 1
 
 
 # --- Researcher ---

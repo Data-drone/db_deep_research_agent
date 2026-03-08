@@ -30,8 +30,8 @@ def make_mock_model(responses: list[str]):
 
 
 SIMPLE_QUERY_LLM_RESPONSES = [
-    # Clarifier: query is clear
-    '{"clarification_needed": false, "clarified_query": "What was Q3 revenue?"}',
+    # Clarifier: refine query
+    '{"clarified_query": "What was Q3 revenue?"}',
     # Planner: one sub-question
     '{"sub_questions": [{"question": "What was Q3 revenue?", "assigned_tools": ["genie_sales"]}], "estimated_iterations": 1}',
     # Evaluator: sufficient
@@ -73,7 +73,7 @@ async def test_simple_query_end_to_end():
 
 MULTI_TOOL_LLM_RESPONSES = [
     # Clarifier
-    '{"clarification_needed": false, "clarified_query": "Analyze customer churn and its drivers"}',
+    '{"clarified_query": "Analyze customer churn and its drivers"}',
     # Planner: two sub-questions, two tools
     '{"sub_questions": [{"question": "What is the current churn rate?", "assigned_tools": ["genie_sales"]}, {"question": "What are the churn drivers?", "assigned_tools": ["vector_search_kb"]}], "estimated_iterations": 1}',
     # Evaluator
@@ -109,7 +109,7 @@ async def test_multi_tool_query():
 
 ITERATIVE_LLM_RESPONSES = [
     # Clarifier
-    '{"clarification_needed": false, "clarified_query": "Compare revenue to competitors"}',
+    '{"clarified_query": "Compare revenue to competitors"}',
     # Planner (iteration 1)
     '{"sub_questions": [{"question": "What is our revenue?", "assigned_tools": ["genie_sales"]}, {"question": "What are competitor revenues?", "assigned_tools": ["vector_search_kb"]}], "estimated_iterations": 2}',
     # Evaluator (iteration 1): needs more

@@ -1,4 +1,4 @@
-"""Clarifier node — detects ambiguity in user queries."""
+"""Clarifier node — refines and focuses user queries for research."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def clarifier_node(state: ResearchState, *, model: Any) -> dict:
-    """Analyze query for ambiguity. Returns state update."""
+    """Refine and focus the user query. Always produces a clarified version."""
     response = await model.ainvoke([
         {"role": "system", "content": CLARIFIER_SYSTEM},
         {"role": "user", "content": state["user_query"]},
@@ -22,12 +22,6 @@ async def clarifier_node(state: ResearchState, *, model: Any) -> dict:
     try:
         result = json.loads(response.content)
     except (json.JSONDecodeError, AttributeError):
-        return {
-            "clarification_needed": False,
-            "clarified_query": state["user_query"],
-        }
+        return {"clarified_query": state["user_query"]}
 
-    return {
-        "clarification_needed": result.get("clarification_needed", False),
-        "clarified_query": result.get("clarified_query", state["user_query"]),
-    }
+    return {"clarified_query": result.get("clarified_query", state["user_query"])}
