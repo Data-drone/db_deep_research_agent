@@ -17,6 +17,7 @@ from deep_research.nodes import (
     planner_node,
     query_adapter_node,
     researcher_node,
+    scorer_node,
     synthesizer_node,
     verifier_node,
 )
@@ -56,6 +57,7 @@ def build_research_graph(
     graph.add_node("synthesizer", partial(synthesizer_node, model=model))
 
     # Critic nodes (GPT-5.4 when available, falls back to worker)
+    graph.add_node("scorer", partial(scorer_node, model=_critic))
     graph.add_node("evaluator", partial(evaluator_node, model=_critic))
     graph.add_node("verifier", partial(verifier_node, model=_critic))
 
@@ -66,7 +68,8 @@ def build_research_graph(
     graph.add_edge("authorizer", "query_adapter")
     graph.add_edge("query_adapter", "researcher")
     graph.add_edge("researcher", "normalizer")
-    graph.add_edge("normalizer", "evaluator")
+    graph.add_edge("normalizer", "scorer")
+    graph.add_edge("scorer", "evaluator")
     graph.add_conditional_edges("evaluator", _should_continue, {
         "planner": "planner",
         "compressor": "compressor",

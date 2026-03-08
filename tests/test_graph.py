@@ -13,7 +13,7 @@ def test_graph_has_expected_nodes():
     node_names = set(graph.get_graph().nodes.keys())
     expected = {
         "clarifier", "planner", "authorizer", "query_adapter", "researcher",
-        "normalizer", "evaluator", "compressor", "synthesizer", "verifier",
+        "normalizer", "scorer", "evaluator", "compressor", "synthesizer", "verifier",
     }
     assert expected.issubset(node_names)
 
@@ -28,7 +28,7 @@ def test_graph_has_expected_nodes_with_critic():
     node_names = set(graph.get_graph().nodes.keys())
     expected = {
         "clarifier", "planner", "authorizer", "query_adapter", "researcher",
-        "normalizer", "evaluator", "compressor", "synthesizer", "verifier",
+        "normalizer", "scorer", "evaluator", "compressor", "synthesizer", "verifier",
     }
     assert expected.issubset(node_names)
 
@@ -42,3 +42,13 @@ def test_graph_query_adapter_between_authorizer_and_researcher():
     query_adapter_edges = [e.target for e in g.edges if e.source == "query_adapter"]
     assert "query_adapter" in authorizer_edges
     assert "researcher" in query_adapter_edges
+
+
+def test_graph_scorer_between_normalizer_and_evaluator():
+    """Verify scorer sits between normalizer and evaluator in the graph."""
+    graph = build_research_graph(model=None, mcp_manager=None)
+    g = graph.get_graph()
+    normalizer_edges = [e.target for e in g.edges if e.source == "normalizer"]
+    scorer_edges = [e.target for e in g.edges if e.source == "scorer"]
+    assert "scorer" in normalizer_edges
+    assert "evaluator" in scorer_edges
