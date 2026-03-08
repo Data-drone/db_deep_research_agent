@@ -27,6 +27,7 @@ class MCPServerConfig:
 class AppConfig:
     databricks_host: str
     llm_endpoint: str
+    critic_llm_endpoint: str = ""
     databricks_token: str = ""
     max_iterations: int = 5
     max_tool_calls: int = 20
@@ -99,10 +100,14 @@ def load_app_config(mcp_config_path: Path | None = None) -> AppConfig:
     managed = tuple(v for v in servers.values() if v.server_kind == "managed")
     custom = tuple(v for v in servers.values() if v.server_kind == "custom")
 
+    llm_ep = os.environ.get("LLM_ENDPOINT_NAME", "databricks-claude-sonnet-4-6")
+    critic_ep = os.environ.get("CRITIC_LLM_ENDPOINT", "") or llm_ep
+
     return AppConfig(
         databricks_host=host,
         databricks_token=token,
-        llm_endpoint=os.environ.get("LLM_ENDPOINT_NAME", "databricks-meta-llama-3-1-70b-instruct"),
+        llm_endpoint=llm_ep,
+        critic_llm_endpoint=critic_ep,
         max_iterations=int(os.environ.get("MAX_ITERATIONS", "2")),
         max_tool_calls=int(os.environ.get("MAX_TOOL_CALLS", "20")),
         time_cap_seconds=int(os.environ.get("TIME_CAP_SECONDS", "120")),

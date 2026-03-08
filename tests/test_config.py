@@ -94,3 +94,19 @@ def test_get_server(sample_app_config):
     assert server is not None
     assert server.display_name == "Test Genie"
     assert sample_app_config.get_server("nonexistent") is None
+
+
+def test_load_app_config_has_critic_endpoint(tmp_path, monkeypatch, fixtures_dir):
+    monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.net")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test")
+    monkeypatch.setenv("CRITIC_LLM_ENDPOINT", "databricks-gpt-5-4")
+    config = load_app_config(mcp_config_path=fixtures_dir / "test_mcp_config.yaml")
+    assert config.critic_llm_endpoint == "databricks-gpt-5-4"
+
+
+def test_critic_endpoint_defaults_to_worker(tmp_path, monkeypatch, fixtures_dir):
+    monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.net")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test")
+    monkeypatch.delenv("CRITIC_LLM_ENDPOINT", raising=False)
+    config = load_app_config(mcp_config_path=fixtures_dir / "test_mcp_config.yaml")
+    assert config.critic_llm_endpoint == config.llm_endpoint
