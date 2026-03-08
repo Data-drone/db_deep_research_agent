@@ -50,6 +50,24 @@ def _create_model(config):
         raise ConfigError(f"Failed to initialize LLM model: {e}") from e
 
 
+def _create_critic_model(config):
+    """Create the critic LLM model for evaluation/verification."""
+    if config.critic_llm_endpoint == config.llm_endpoint:
+        return None
+
+    try:
+        from databricks_langchain import ChatDatabricks
+        model = ChatDatabricks(endpoint=config.critic_llm_endpoint)
+        logger.info(f"Critic model initialized: {config.critic_llm_endpoint}")
+        return model
+    except ImportError:
+        logger.warning("databricks-langchain not installed — critic model disabled")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to initialize critic model: {e} — falling back to worker")
+        return None
+
+
 def create_production_app():
     """Create the FastAPI app with real dependencies wired up.
 
@@ -89,10 +107,11 @@ def create_production_app():
 
     # Build LLM model (fail fast if unavailable)
     model = _create_model(config)
-    logger.info("Model created successfully")
+    critic_model = _create_critic_model(config)
+    logger.info("Model(s) created successfully")
 
     # Build the research graph
-    graph = build_research_graph(model=model, mcp_manager=mcp_manager)
+    graph = build_research_graph(model=model, mcp_manager=mcp_manager, critic_model=critic_model)
     logger.info("Research graph compiled successfully")
 
     # Create the FastAPI app

@@ -37,20 +37,25 @@ def _should_continue(state: ResearchState) -> str:
 def build_research_graph(
     model: Any,
     mcp_manager: MCPClientManager | None,
+    critic_model: Any | None = None,
 ) -> Any:
     """Build and compile the full research agent graph."""
+    _critic = critic_model or model
+
     graph = StateGraph(ResearchState)
 
-    # Add nodes — each wraps the node function with injected dependencies
+    # Worker nodes
     graph.add_node("clarifier", partial(clarifier_node, model=model))
     graph.add_node("planner", partial(planner_node, model=model))
     graph.add_node("authorizer", partial(authorizer_node, model=model))
     graph.add_node("researcher", partial(researcher_node, model=model, mcp_manager=mcp_manager))
     graph.add_node("normalizer", partial(normalizer_node, model=model))
-    graph.add_node("evaluator", partial(evaluator_node, model=model))
     graph.add_node("compressor", partial(compressor_node, model=model))
     graph.add_node("synthesizer", partial(synthesizer_node, model=model))
-    graph.add_node("verifier", partial(verifier_node, model=model))
+
+    # Critic nodes (GPT-5.4 when available, falls back to worker)
+    graph.add_node("evaluator", partial(evaluator_node, model=_critic))
+    graph.add_node("verifier", partial(verifier_node, model=_critic))
 
     # Define edges
     graph.set_entry_point("clarifier")
