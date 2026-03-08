@@ -6,6 +6,7 @@ from deep_research.nodes.authorizer import authorizer_node
 from deep_research.nodes.query_adapter import query_adapter_node
 from deep_research.nodes.researcher import researcher_node
 from deep_research.nodes.normalizer import normalizer_node
+from deep_research.nodes.scorer import scorer_node
 from deep_research.nodes.evaluator import evaluator_node
 from deep_research.nodes.compressor import compressor_node
 from deep_research.nodes.synthesizer import synthesizer_node
@@ -18,6 +19,7 @@ __all__ = [
     "query_adapter_node",
     "researcher_node",
     "normalizer_node",
+    "scorer_node",
     "evaluator_node",
     "compressor_node",
     "synthesizer_node",

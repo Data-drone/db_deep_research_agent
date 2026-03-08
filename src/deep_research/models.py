@@ -30,7 +30,7 @@ class SubQuestion:
     subquestion_id: str
     question: str
     assigned_tools: list[str]
-    status: Literal["pending", "in_progress", "answered", "abandoned"] = "pending"
+    status: Literal["pending", "in_progress", "answered", "partially_answered", "abandoned"] = "pending"
     answer_summary: str | None = None
     evidence_ids: list[str] = field(default_factory=list)
     iteration_created: int = 0

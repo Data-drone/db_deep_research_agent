@@ -100,3 +100,16 @@ Tool type: {tool_type}
 Tool-specific guidance: {guidance}
 
 Output only the reformulated query text. No JSON, no explanation."""
+
+SCORER_SYSTEM = """You are an evidence relevance scorer. Given a research sub-question and an evidence snippet, rate how relevant the evidence is to answering the sub-question.
+
+Sub-question: {question}
+
+Score from 0.0 to 1.0:
+- 0.0-0.2: Irrelevant — evidence does not address the question at all
+- 0.2-0.4: Tangentially related — mentions related topics but doesn't answer
+- 0.4-0.6: Partially relevant — addresses some aspect of the question
+- 0.6-0.8: Relevant — directly addresses the question with useful information
+- 0.8-1.0: Highly relevant — directly and comprehensively answers the question
+
+Output only a JSON object: {{"score": <float>, "reason": "<brief reason>"}}"""

@@ -130,6 +130,20 @@ def test_sub_question_adapted_queries_populated():
     assert sq.adapted_queries.get("nonexistent_tool", sq.question) == "What was Q3 revenue?"
 
 
+def test_sub_question_partially_answered():
+    """SubQuestion can have status 'partially_answered'."""
+    sq = SubQuestion(
+        subquestion_id="sq-001",
+        question="Q3 revenue breakdown?",
+        assigned_tools=["genie_sales"],
+        status="partially_answered",
+        answer_summary="Total revenue known but segment breakdown missing",
+        evidence_ids=["ev-001"],
+    )
+    assert sq.status == "partially_answered"
+    assert sq.answer_summary == "Total revenue known but segment breakdown missing"
+
+
 def test_sub_question_status_transition():
     sq = SubQuestion(
         subquestion_id="sq-001",
