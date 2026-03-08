@@ -27,7 +27,8 @@ def sample_app_config(sample_mcp_server):
     return AppConfig(
         databricks_host="https://test.databricks.net",
         databricks_token="dapi_test_token",
-        llm_endpoint="databricks-meta-llama-3-1-70b-instruct",
+        llm_endpoint="databricks-claude-sonnet-4-6",
+        critic_llm_endpoint="databricks-gpt-5-4",
         managed_servers=(sample_mcp_server,),
     )
 
