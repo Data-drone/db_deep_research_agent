@@ -4,6 +4,8 @@ command:
 env:
   - name: LLM_ENDPOINT_NAME
     value: "databricks-claude-sonnet-4-6"
+  - name: CRITIC_LLM_ENDPOINT
+    value: "databricks-gpt-5-4"
   - name: PYTHONPATH
     value: "src"
   - name: MLFLOW_EXPERIMENT_NAME
