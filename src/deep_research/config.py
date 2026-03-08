@@ -19,7 +19,7 @@ class MCPServerConfig:
     enabled: bool = True
     risk_tier: Literal["safe", "restricted", "privileged"] = "safe"
     capability: Literal["read", "read_write"] = "read"
-    managed_type: Literal["genie", "vector_search"] | None = None
+    managed_type: Literal["genie", "vector_search", "knowledge_assistant"] | None = None
     description: str = ""
 
 
@@ -71,6 +71,8 @@ def load_mcp_config(path: Path) -> dict[str, MCPServerConfig]:
                     cfg_copy["managed_type"] = "genie"
                 elif "vector" in name.lower():
                     cfg_copy["managed_type"] = "vector_search"
+                elif "knowledge" in name.lower():
+                    cfg_copy["managed_type"] = "knowledge_assistant"
             servers[name] = MCPServerConfig(**cfg_copy)
     return servers
 

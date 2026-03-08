@@ -279,3 +279,99 @@ async def test_connect_all_handles_failure(mock_server_configs):
     # One should have failed, one should have succeeded
     # (genie_sales fails, vector_kb succeeds — or vice versa depending on dict ordering)
     assert len(manager._connections) == 1
+
+
+# ── Knowledge Assistant wrapper tests ──
+
+
+@pytest.fixture
+def ka_server_config():
+    return {
+        "knowledge_assistant": MCPServerConfig(
+            name="knowledge_assistant",
+            url="https://test.databricks.net/serving-endpoints/ka-endpoint/invocations",
+            display_name="Knowledge Assistant",
+            server_kind="managed",
+            enabled=True,
+            risk_tier="safe",
+            capability="read",
+            managed_type="knowledge_assistant",
+            description="Test KA",
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_tool_knowledge_assistant(ka_server_config):
+    """call_tool on a knowledge_assistant uses httpx POST, not MCP client."""
+    import json as _json
+    manager = MCPClientManager(ka_server_config, token="test")
+
+    # Manually set up connection (skip connect_all which would hit real endpoint)
+    manager._connections["knowledge_assistant"] = {
+        "client": None,
+        "tools": [_make_mock_tool("knowledge_assistant_knowledge_assistant")],
+        "query_tool": "knowledge_assistant_knowledge_assistant",
+        "poll_tool": None,
+        "config": ka_server_config["knowledge_assistant"],
+        "auth_headers": {"Authorization": "Bearer fake-token"},
+    }
+
+    ka_response = {
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "ANZ reported $10B revenue in 2024."}],
+        }]
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = ka_response
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.post = AsyncMock(return_value=mock_resp)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("deep_research.mcp_client.httpx.AsyncClient", return_value=mock_client_instance):
+        result = await manager.call_tool(
+            "knowledge_assistant", "query", {"query": "What was ANZ revenue?"}
+        )
+
+    assert "ANZ reported $10B revenue" in result["result"]
+    assert result["source"] == "knowledge_assistant"
+    # Verify the POST was called with correct format
+    mock_client_instance.post.assert_called_once()
+    call_args = mock_client_instance.post.call_args
+    assert call_args[1]["json"]["input"][0]["content"] == "What was ANZ revenue?"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_knowledge_assistant_error(ka_server_config):
+    """call_tool on KA raises RuntimeError on non-200 response."""
+    manager = MCPClientManager(ka_server_config, token="test")
+
+    manager._connections["knowledge_assistant"] = {
+        "client": None,
+        "tools": [_make_mock_tool("knowledge_assistant_knowledge_assistant")],
+        "query_tool": "knowledge_assistant_knowledge_assistant",
+        "poll_tool": None,
+        "config": ka_server_config["knowledge_assistant"],
+        "auth_headers": {},
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 500
+    mock_resp.text = "Internal Server Error"
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.post = AsyncMock(return_value=mock_resp)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("deep_research.mcp_client.httpx.AsyncClient", return_value=mock_client_instance):
+        with pytest.raises(RuntimeError, match="KA endpoint returned 500"):
+            await manager.call_tool(
+                "knowledge_assistant", "query", {"query": "test"}
+            )

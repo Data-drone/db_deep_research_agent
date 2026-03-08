@@ -24,12 +24,13 @@ managed_servers:
     description: "Search the ANZ 2024 annual report via vector search index"
 
   knowledge_assistant:
-    url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/serving-endpoints/ka-e042a90f-endpoint"
+    url: "https://adb-984752964297111.11.azuredatabricks.net/serving-endpoints/ka-e042a90f-endpoint/invocations"
     display_name: "Knowledge Assistant"
-    enabled: false
+    enabled: true
     risk_tier: "safe"
     capability: "read"
-    description: "Knowledge assistant — disabled (serving endpoint, not MCP)"
+    managed_type: "knowledge_assistant"
+    description: "Knowledge assistant for answering questions from curated knowledge base"
 
 custom_servers:
   # Future custom MCP servers hosted on Databricks Apps

@@ -8,6 +8,8 @@ import logging
 import re
 from typing import Any
 
+import httpx
+
 from deep_research.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,10 @@ class MCPClientManager:
         self, name: str, cfg: MCPServerConfig, ws: Any
     ) -> None:
         """Connect to a single MCP server and discover its tools."""
+        if cfg.managed_type == "knowledge_assistant":
+            await self._connect_knowledge_assistant(name, cfg, ws)
+            return
+
         from databricks_mcp import DatabricksMCPClient
 
         client = DatabricksMCPClient(server_url=cfg.url, workspace_client=ws)
@@ -173,6 +179,43 @@ class MCPClientManager:
             "config": cfg,
         }
 
+    async def _connect_knowledge_assistant(
+        self, name: str, cfg: MCPServerConfig, ws: Any
+    ) -> None:
+        """Set up connection to a Knowledge Assistant serving endpoint.
+
+        KA endpoints are not MCP servers — they use the Responses API format
+        at /serving-endpoints/{name}/invocations.
+        """
+        # Get auth headers from WorkspaceClient
+        auth_headers: dict[str, str] = {}
+        try:
+            ws.config.authenticate(auth_headers)
+        except Exception:
+            logger.warning(f"Could not get auth headers for KA: {name}")
+
+        # Verify endpoint is reachable with a lightweight call
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                cfg.url,
+                headers={**auth_headers, "Content-Type": "application/json"},
+                json={"input": [{"role": "user", "content": "ping"}]},
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"KA endpoint returned {resp.status_code}: {resp.text[:200]}"
+                )
+
+        from types import SimpleNamespace
+        self._connections[name] = {
+            "client": None,  # No MCP client for KA
+            "tools": [SimpleNamespace(name=f"knowledge_assistant_{name}")],
+            "query_tool": f"knowledge_assistant_{name}",
+            "poll_tool": None,
+            "config": cfg,
+            "auth_headers": auth_headers,
+        }
+
     async def call_tool(
         self, server_name: str, tool_name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
@@ -191,9 +234,14 @@ class MCPClientManager:
             raise RuntimeError(f"Not connected to server: {server_name}")
 
         conn = self._connections[server_name]
+        cfg = conn["config"]
+
+        # Knowledge Assistant uses serving endpoint, not MCP
+        if cfg.managed_type == "knowledge_assistant":
+            return await self._call_knowledge_assistant(server_name, conn, arguments)
+
         client = conn["client"]
         actual_tool = conn["query_tool"]
-        cfg = conn["config"]
 
         if actual_tool is None:
             raise RuntimeError(f"No query tool discovered for server: {server_name}")
@@ -210,6 +258,48 @@ class MCPClientManager:
                 text = await self._poll_genie_result(
                     client, conn["poll_tool"], polling_info
                 )
+
+        return {"result": text, "source": server_name}
+
+    async def _call_knowledge_assistant(
+        self,
+        server_name: str,
+        conn: dict[str, Any],
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call a Knowledge Assistant serving endpoint.
+
+        Sends the query via the Responses API format and extracts the text response.
+        """
+        cfg = conn["config"]
+        auth_headers = conn.get("auth_headers", {})
+        query = arguments.get("query", "")
+
+        logger.info(f"Calling Knowledge Assistant: {server_name} with query: {query[:100]}")
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                cfg.url,
+                headers={**auth_headers, "Content-Type": "application/json"},
+                json={"input": [{"role": "user", "content": query}]},
+            )
+
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"KA endpoint returned {resp.status_code}: {resp.text[:200]}"
+            )
+
+        data = resp.json()
+        # Extract text from Responses API output format
+        text = ""
+        for output_item in data.get("output", []):
+            if output_item.get("type") == "message":
+                for content_item in output_item.get("content", []):
+                    if content_item.get("type") == "output_text":
+                        text += content_item.get("text", "")
+
+        if not text:
+            text = json.dumps(data.get("output", data))
 
         return {"result": text, "source": server_name}
 
