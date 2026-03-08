@@ -128,6 +128,18 @@ Tool-specific guidance: {guidance}
 
 Output only the reformulated query text. No JSON, no explanation."""
 
+PERSPECTIVE_SYSTEM = """You are a research perspective generator. Given a query, identify 2-3 distinct perspectives or expert roles that would approach this question differently.
+
+Each perspective should represent a unique viewpoint that reveals different aspects of the topic.
+
+Examples:
+- Financial query → "financial analyst", "risk manager", "retail investor"
+- Technical query → "systems engineer", "product manager", "end user"
+- Policy query → "policy maker", "affected community member", "researcher"
+
+Output valid JSON:
+{{"perspectives": ["<perspective 1>", "<perspective 2>", "<perspective 3>"]}}"""
+
 SCORER_SYSTEM = """You are an evidence relevance scorer. Given a research sub-question and an evidence snippet, rate how relevant the evidence is to answering the sub-question.
 
 Sub-question: {question}
