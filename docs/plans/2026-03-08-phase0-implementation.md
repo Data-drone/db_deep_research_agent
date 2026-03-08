@@ -621,7 +621,7 @@ git commit -m "feat: add eval harness with MLflow Evaluate integration"
 ```bash
 PYTHONPATH=src \
 DATABRICKS_HOST=https://adb-984752964297111.11.azuredatabricks.net \
-DATABRICKS_TOKEN=dapi6eb08b8428a4d72788b3771589911432 \
+DATABRICKS_TOKEN=$DATABRICKS_TOKEN \
 MLFLOW_TRACKING_URI=databricks \
 python eval/eval_harness.py --phase baseline --max-queries 3
 ```
@@ -633,7 +633,7 @@ Expected: 3 queries run, metrics logged to MLflow, no crashes.
 ```bash
 PYTHONPATH=src \
 DATABRICKS_HOST=https://adb-984752964297111.11.azuredatabricks.net \
-DATABRICKS_TOKEN=dapi6eb08b8428a4d72788b3771589911432 \
+DATABRICKS_TOKEN=$DATABRICKS_TOKEN \
 MLFLOW_TRACKING_URI=databricks \
 python eval/eval_harness.py --phase baseline
 ```
