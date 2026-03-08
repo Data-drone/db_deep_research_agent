@@ -17,9 +17,10 @@ async def verifier_node(state: ResearchState, *, model: Any) -> dict:
     """Verify that all claims in the final output are supported by evidence."""
     final_output = state.get("final_output", "")
     evidence = state.get("evidence", [])
+    verification_attempts = state.get("verification_attempts", 0) + 1
 
     evidence_text = "\n".join(
-        f"- [{e.source_id}] {e.snippet}" for e in evidence
+        f"- [{e.source_id}] (relevance={e.confidence:.2f}) {e.snippet}" for e in evidence
     )
 
     response = await model.ainvoke([
@@ -39,7 +40,8 @@ async def verifier_node(state: ResearchState, *, model: Any) -> dict:
                 unsupported_claims=[],
                 weakened_claims=[],
                 contradictions_noted=[],
-            )
+            ),
+            "verification_attempts": verification_attempts,
         }
 
     return {
@@ -48,5 +50,6 @@ async def verifier_node(state: ResearchState, *, model: Any) -> dict:
             unsupported_claims=result.get("unsupported_claims", []),
             weakened_claims=result.get("weakened_claims", []),
             contradictions_noted=result.get("contradictions_noted", []),
-        )
+        ),
+        "verification_attempts": verification_attempts,
     }

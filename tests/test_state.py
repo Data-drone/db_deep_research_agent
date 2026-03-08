@@ -17,6 +17,8 @@ def test_create_initial_state():
     assert state["tool_calls_used"] == 0
     assert state["evidence"] == []
     assert state["clarification_needed"] is False
+    assert state["verification_attempts"] == 0
+    assert state["perspectives"] == []
 
 
 def test_initial_state_report_mode():

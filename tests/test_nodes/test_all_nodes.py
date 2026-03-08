@@ -589,10 +589,11 @@ async def test_verifier_all_supported():
     }))
     state = create_initial_state(user_query="test", selected_tools=[])
     state["final_output"] = "Revenue was $12.4M"
-    state["evidence"] = [MagicMock(source_id="g", snippet="Revenue $12.4M")]
+    state["evidence"] = [MagicMock(source_id="g", snippet="Revenue $12.4M", confidence=0.9)]
 
     result = await verifier_node(state, model=model)
     assert result["verification_result"].all_claims_supported is True
+    assert result["verification_attempts"] == 1
 
 
 @pytest.mark.asyncio
@@ -605,8 +606,27 @@ async def test_verifier_unsupported_claims():
     }))
     state = create_initial_state(user_query="test", selected_tools=[])
     state["final_output"] = "Revenue grew. Market share grew 20%."
-    state["evidence"] = [MagicMock(source_id="g", snippet="Revenue grew")]
+    state["evidence"] = [MagicMock(source_id="g", snippet="Revenue grew", confidence=0.85)]
 
     result = await verifier_node(state, model=model)
     assert result["verification_result"].all_claims_supported is False
     assert "Market share grew 20%" in result["verification_result"].unsupported_claims
+    assert result["verification_attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_verifier_increments_attempts():
+    """Verify that verification_attempts increments from existing state value."""
+    model = make_mock_model(json.dumps({
+        "all_claims_supported": True,
+        "unsupported_claims": [],
+        "weakened_claims": [],
+        "contradictions_noted": [],
+    }))
+    state = create_initial_state(user_query="test", selected_tools=[])
+    state["final_output"] = "Some claim"
+    state["evidence"] = [MagicMock(source_id="g", snippet="evidence", confidence=0.75)]
+    state["verification_attempts"] = 2  # already ran twice
+
+    result = await verifier_node(state, model=model)
+    assert result["verification_attempts"] == 3  # incremented from 2 to 3

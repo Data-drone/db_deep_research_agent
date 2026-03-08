@@ -33,6 +33,7 @@ class ResearchState(TypedDict, total=False):
     research_plan: list[SubQuestion]
     tool_assignments: dict[str, list[str]]
     budget: Budget
+    perspectives: list[str]
 
     # Research
     evidence: list[Evidence]
@@ -52,6 +53,7 @@ class ResearchState(TypedDict, total=False):
     final_output: str
     citations: list[Citation]
     verification_result: VerificationResult | None
+    verification_attempts: int
 
     # Tracing
     trace_id: str
@@ -83,6 +85,7 @@ def create_initial_state(
         research_plan=[],
         tool_assignments={},
         budget=budget or Budget(),
+        perspectives=[],
         evidence=[],
         tool_call_log=[],
         iteration_count=0,
@@ -96,6 +99,7 @@ def create_initial_state(
         final_output="",
         citations=[],
         verification_result=None,
+        verification_attempts=0,
         trace_id=trace_id,
         job_id=job_id,
         cancelled=False,
