@@ -154,6 +154,106 @@ async def test_researcher_respects_budget():
     assert result["tool_calls_used"] == 2  # stopped at budget
 
 
+@pytest.mark.asyncio
+async def test_researcher_uses_adapted_queries():
+    """When adapted_queries is populated, the researcher should use the
+    adapted query string instead of sq.question when calling the tool."""
+    model = make_mock_model("")
+    mcp = make_mock_mcp()
+    sq = SubQuestion(
+        subquestion_id="sq-1",
+        question="What was Q3 revenue?",
+        assigned_tools=["genie_sales"],
+        adapted_queries={"genie_sales": "SELECT revenue FROM quarterly WHERE quarter='Q3'"},
+    )
+    state = create_initial_state(user_query="test", selected_tools=["genie_sales"])
+    state["research_plan"] = [sq]
+    state["budget"] = Budget(max_tool_calls=10)
+
+    result = await researcher_node(state, model=model, mcp_manager=mcp)
+
+    # Verify the adapted query was sent, not the original question
+    mcp.call_tool.assert_called_once()
+    call_args = mcp.call_tool.call_args
+    assert call_args[0][2] == {"query": "SELECT revenue FROM quarterly WHERE quarter='Q3'"}
+    # Evidence should still be collected
+    assert len(result["evidence"]) == 1
+    assert result["tool_calls_used"] == 1
+
+
+@pytest.mark.asyncio
+async def test_researcher_parallel_multiple_sub_questions():
+    """Two sub-questions should both produce evidence when run in parallel."""
+    model = make_mock_model("")
+    mcp = AsyncMock()
+    mcp.call_tool.return_value = {
+        "result": "some data",
+        "source": "test_source",
+    }
+    sq1 = SubQuestion(subquestion_id="sq-1", question="Question A?", assigned_tools=["tool_a"])
+    sq2 = SubQuestion(subquestion_id="sq-2", question="Question B?", assigned_tools=["tool_b"])
+    state = create_initial_state(user_query="test", selected_tools=["tool_a", "tool_b"])
+    state["research_plan"] = [sq1, sq2]
+    state["budget"] = Budget(max_tool_calls=10)
+
+    result = await researcher_node(state, model=model, mcp_manager=mcp)
+
+    # Both sub-questions should produce evidence
+    assert len(result["evidence"]) == 2
+    assert len(result["tool_call_log"]) == 2
+    assert result["tool_calls_used"] == 2
+    # Both sub-questions should be in_progress
+    assert sq1.status == "in_progress"
+    assert sq2.status == "in_progress"
+    # Each sub-question should have its own evidence
+    assert len(sq1.evidence_ids) == 1
+    assert len(sq2.evidence_ids) == 1
+    # call_tool should have been called twice (once per sub-question)
+    assert mcp.call_tool.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_researcher_parallel_one_fails():
+    """If one sub-question's tool fails, the other should still succeed."""
+    model = make_mock_model("")
+    mcp = AsyncMock()
+
+    async def _selective_call(tool_name, method, input_data):
+        if tool_name == "broken_tool":
+            raise RuntimeError("Connection failed")
+        return {"result": "good data", "source": "ok_source"}
+
+    mcp.call_tool.side_effect = _selective_call
+
+    sq_ok = SubQuestion(subquestion_id="sq-1", question="Good question?", assigned_tools=["ok_tool"])
+    sq_bad = SubQuestion(
+        subquestion_id="sq-2", question="Bad question?", assigned_tools=["broken_tool"]
+    )
+    state = create_initial_state(
+        user_query="test", selected_tools=["ok_tool", "broken_tool"]
+    )
+    state["research_plan"] = [sq_ok, sq_bad]
+    state["budget"] = Budget(max_tool_calls=10)
+
+    result = await researcher_node(state, model=model, mcp_manager=mcp)
+
+    # The good sub-question should have evidence
+    assert len(result["evidence"]) == 1
+    assert result["evidence"][0].snippet == "good data"
+    # Both sub-questions produced tool call logs (success + error)
+    assert len(result["tool_call_log"]) == 2
+    assert result["tool_calls_used"] == 2
+    # Find the error tool call
+    error_tc = [tc for tc in result["tool_call_log"] if tc.status == "error"]
+    assert len(error_tc) == 1
+    assert error_tc[0].tool_name == "broken_tool"
+    assert error_tc[0].error_type == "RuntimeError"
+    # Find the success tool call
+    ok_tc = [tc for tc in result["tool_call_log"] if tc.status == "success"]
+    assert len(ok_tc) == 1
+    assert ok_tc[0].tool_name == "ok_tool"
+
+
 # --- Normalizer ---
 
 @pytest.mark.asyncio

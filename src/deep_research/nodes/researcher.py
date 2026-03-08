@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -17,7 +18,12 @@ logger = logging.getLogger(__name__)
 async def researcher_node(
     state: ResearchState, *, model: Any, mcp_manager: Any
 ) -> dict:
-    """Execute tool calls from the research plan, collecting evidence."""
+    """Execute tool calls from the research plan, collecting evidence.
+
+    Sub-questions are executed in parallel via asyncio.gather.
+    Tools *within* a single sub-question still run sequentially
+    (since they may depend on each other).
+    """
     plan = state.get("research_plan", [])
     iteration = state.get("iteration_count", 0) + 1
     existing_evidence = list(state.get("evidence", []))
@@ -25,22 +31,40 @@ async def researcher_node(
     tool_calls_used = state.get("tool_calls_used", 0)
     budget = state.get("budget")
 
-    new_evidence: list[Evidence] = []
-    new_tool_calls: list[ToolCall] = []
+    # Identify pending sub-questions
+    pending = [sq for sq in plan if sq.status != "answered"]
+    if not pending:
+        return {
+            "evidence": existing_evidence,
+            "tool_call_log": existing_tool_calls,
+            "iteration_count": iteration,
+            "tool_calls_used": tool_calls_used,
+            "research_plan": plan,
+        }
 
-    for sq in plan:
-        if sq.status == "answered":
-            continue
+    # Remaining budget (used for per-sub-question caps)
+    remaining_budget = (budget.max_tool_calls - tool_calls_used) if budget else 999
+    # Distribute budget slots across pending sub-questions
+    per_sq_budget = max(remaining_budget // len(pending), 1) if pending else remaining_budget
+
+    async def _research_one(sq):
+        """Execute all tools for one sub-question sequentially."""
+        new_evidence: list[Evidence] = []
+        new_tool_calls: list[ToolCall] = []
+        local_calls = 0
 
         for tool_name in sq.assigned_tools:
-            # Budget check
-            if budget and tool_calls_used >= budget.max_tool_calls:
-                logger.warning("Tool call budget exhausted")
+            # Per-sub-question budget cap
+            if local_calls >= per_sq_budget:
+                logger.warning("Per-sub-question budget cap reached")
                 break
+
+            # Use adapted query if available (Gap #2 integration)
+            query = sq.adapted_queries.get(tool_name, sq.question)
 
             start_time = time.monotonic()
             started_at = datetime.now(timezone.utc)
-            input_data = {"query": sq.question}
+            input_data = {"query": query}
 
             try:
                 result = await mcp_manager.call_tool(
@@ -58,7 +82,7 @@ async def researcher_node(
                     started_at=started_at,
                 )
                 new_tool_calls.append(tc)
-                tool_calls_used += 1
+                local_calls += 1
 
                 # Create evidence from result
                 evidences = build_evidence_from_tool_result(
@@ -88,13 +112,37 @@ async def researcher_node(
                     error_message=str(e),
                 )
                 new_tool_calls.append(tc)
-                tool_calls_used += 1
+                local_calls += 1
                 logger.warning(f"Tool call failed: {tool_name} - {e}")
 
+        return new_evidence, new_tool_calls, local_calls
+
+    # Execute all pending sub-questions in parallel
+    results = await asyncio.gather(
+        *[_research_one(sq) for sq in pending],
+        return_exceptions=True,
+    )
+
+    # Merge results
+    all_evidence = list(existing_evidence)
+    all_tool_calls = list(existing_tool_calls)
+    total_calls = tool_calls_used
+
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(
+                f"Sub-question research failed: {pending[i].question[:60]} - {result}"
+            )
+            continue
+        evidence, tool_calls, calls = result
+        all_evidence.extend(evidence)
+        all_tool_calls.extend(tool_calls)
+        total_calls += calls
+
     return {
-        "evidence": existing_evidence + new_evidence,
-        "tool_call_log": existing_tool_calls + new_tool_calls,
+        "evidence": all_evidence,
+        "tool_call_log": all_tool_calls,
         "iteration_count": iteration,
-        "tool_calls_used": tool_calls_used,
+        "tool_calls_used": total_calls,
         "research_plan": plan,
     }
