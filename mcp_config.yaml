@@ -16,7 +16,7 @@ managed_servers:
     description: "Analyze sales pipeline performance, metrics, and data via Genie"
 
   vector_search_anz:
-    url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/mcp/vector-search/brian_gen_ai.vs_demo.anz_2024_annual_report/mcp/v1"
+    url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/mcp/vector-search/brian_gen_ai/vs_demo/anz_2024_annual_report"
     display_name: "ANZ 2024 Annual Report (Vector Search)"
     enabled: true
     risk_tier: "safe"
@@ -26,10 +26,10 @@ managed_servers:
   knowledge_assistant:
     url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/serving-endpoints/ka-e042a90f-endpoint"
     display_name: "Knowledge Assistant"
-    enabled: true
+    enabled: false
     risk_tier: "safe"
     capability: "read"
-    description: "Knowledge assistant for answering questions from curated knowledge base"
+    description: "Knowledge assistant — disabled (serving endpoint, not MCP)"
 
 custom_servers:
   # Future custom MCP servers hosted on Databricks Apps

@@ -1,22 +1,77 @@
-"""MCP client manager — connects to and manages MCP servers."""
+"""MCP client manager — connects to Databricks MCP servers via databricks-mcp."""
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import re
 from typing import Any
 
 from deep_research.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of poll attempts for Genie async responses
+GENIE_POLL_MAX_ATTEMPTS = 30
+GENIE_POLL_INTERVAL_SECONDS = 2.0
+
+
+def _extract_text_from_call_result(result: Any) -> str:
+    """Extract text content from a CallToolResult."""
+    if hasattr(result, "content"):
+        parts = []
+        for item in result.content:
+            if hasattr(item, "text"):
+                parts.append(item.text)
+        return "\n".join(parts)
+    return str(result)
+
+
+def _parse_genie_async_response(text: str) -> dict[str, str] | None:
+    """Parse a Genie async polling response to extract conversation_id and message_id.
+
+    Genie tool calls return text like:
+        The query is being processed. Status: FILTERING_CONTEXT.
+        ... conversation_id: abc123, message_id: def456 ...
+
+    Returns dict with conversation_id and message_id, or None if not a polling response.
+    """
+    if not any(status in text for status in (
+        "FILTERING_CONTEXT", "EXECUTING_QUERY", "is being processed"
+    )):
+        return None
+
+    conv_match = re.search(r"conversation_id[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9_-]+)", text)
+    msg_match = re.search(r"message_id[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9_-]+)", text)
+
+    if conv_match and msg_match:
+        return {
+            "conversation_id": conv_match.group(1),
+            "message_id": msg_match.group(1),
+        }
+
+    # Try JSON parsing as fallback
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "conversation_id" in data:
+            return {
+                "conversation_id": data["conversation_id"],
+                "message_id": data.get("message_id", ""),
+            }
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return None
+
 
 class MCPClientManager:
-    """Manages connections to MCP servers and tool discovery."""
+    """Manages connections to Databricks MCP servers using databricks-mcp."""
 
     def __init__(
         self,
         server_configs: dict[str, MCPServerConfig],
-        token: str,
+        token: str = "",
     ) -> None:
         self._configs = server_configs
         self._token = token
@@ -56,41 +111,140 @@ class MCPClientManager:
             if cfg.capability == capability
         }
 
+    def _create_workspace_client(self) -> Any:
+        """Create a WorkspaceClient for authentication.
+
+        In Databricks Apps, WorkspaceClient() auto-detects OAuth credentials
+        (DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET).
+        Falls back to DATABRICKS_TOKEN if available.
+        """
+        try:
+            from databricks.sdk import WorkspaceClient
+            return WorkspaceClient()
+        except Exception:
+            logger.warning(
+                "Could not create WorkspaceClient — MCP calls may fail",
+                exc_info=True,
+            )
+            return None
+
     async def connect_all(self) -> None:
-        """Establish connections to all enabled MCP servers."""
+        """Discover tools from all enabled MCP servers."""
+        ws = self._create_workspace_client()
+        if ws is None:
+            logger.warning("No WorkspaceClient available — skipping MCP connections")
+            return
+
         for name, cfg in self.get_available_servers().items():
             try:
-                await self._connect_server(name, cfg)
-                logger.info(f"Connected to MCP server: {name} ({cfg.display_name})")
+                await self._connect_server(name, cfg, ws)
+                tools = self._connections[name].get("tools", [])
+                tool_names = [t.name for t in tools]
+                logger.info(
+                    f"Connected to MCP server: {name} ({cfg.display_name}) "
+                    f"— tools: {tool_names}"
+                )
             except Exception:
                 logger.exception(f"Failed to connect to MCP server: {name}")
 
-    async def _connect_server(self, name: str, cfg: MCPServerConfig) -> None:
-        """Connect to a single MCP server. Placeholder for real MCP SDK integration."""
-        # TODO: Replace with actual MCP client SDK connection
-        # from mcp import ClientSession
-        # session = await ClientSession.connect(cfg.url, token=self._token)
-        # self._connections[name] = session
-        self._connections[name] = {"url": cfg.url, "status": "connected"}
+    async def _connect_server(
+        self, name: str, cfg: MCPServerConfig, ws: Any
+    ) -> None:
+        """Connect to a single MCP server and discover its tools."""
+        from databricks_mcp import DatabricksMCPClient
+
+        client = DatabricksMCPClient(server_url=cfg.url, workspace_client=ws)
+        tools = await client.alist_tools()
+
+        # Find the poll tool for Genie servers (poll_response_*)
+        poll_tool = None
+        query_tool = None
+        for tool in tools:
+            if tool.name.startswith("poll_response"):
+                poll_tool = tool.name
+            else:
+                query_tool = tool.name
+
+        self._connections[name] = {
+            "client": client,
+            "tools": tools,
+            "query_tool": query_tool,
+            "poll_tool": poll_tool,
+            "config": cfg,
+        }
 
     async def call_tool(
         self, server_name: str, tool_name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Call a tool on a specific MCP server."""
+        """Call a tool on a specific MCP server.
+
+        Args:
+            server_name: The config key of the server to call.
+            tool_name: Generic action name (e.g., "query"). Mapped to the
+                       actual MCP tool name discovered during connect.
+            arguments: Arguments to pass (e.g., {"query": "..."}).
+
+        Returns:
+            Dict with "result" (text) and "source" (server name).
+        """
         if server_name not in self._connections:
             raise RuntimeError(f"Not connected to server: {server_name}")
 
-        # TODO: Replace with actual MCP tool call
-        # session = self._connections[server_name]
-        # result = await session.call_tool(tool_name, arguments)
-        # return result
-        return {"status": "placeholder", "server": server_name, "tool": tool_name}
+        conn = self._connections[server_name]
+        client = conn["client"]
+        actual_tool = conn["query_tool"]
+        cfg = conn["config"]
+
+        if actual_tool is None:
+            raise RuntimeError(f"No query tool discovered for server: {server_name}")
+
+        logger.info(f"Calling MCP tool: {actual_tool} on {server_name}")
+
+        result = await client.acall_tool(actual_tool, arguments)
+        text = _extract_text_from_call_result(result)
+
+        # Handle Genie async polling
+        if cfg.managed_type == "genie" and conn.get("poll_tool"):
+            polling_info = _parse_genie_async_response(text)
+            if polling_info:
+                text = await self._poll_genie_result(
+                    client, conn["poll_tool"], polling_info
+                )
+
+        return {"result": text, "source": server_name}
+
+    async def _poll_genie_result(
+        self,
+        client: Any,
+        poll_tool_name: str,
+        polling_info: dict[str, str],
+    ) -> str:
+        """Poll a Genie MCP server until the query completes."""
+        for attempt in range(GENIE_POLL_MAX_ATTEMPTS):
+            await asyncio.sleep(GENIE_POLL_INTERVAL_SECONDS)
+
+            result = await client.acall_tool(poll_tool_name, polling_info)
+            text = _extract_text_from_call_result(result)
+
+            logger.info(
+                f"Genie poll attempt {attempt + 1}/{GENIE_POLL_MAX_ATTEMPTS}: "
+                f"{text[:100]}..."
+            )
+
+            # Check if still processing
+            if _parse_genie_async_response(text) is not None:
+                continue
+
+            # Response is complete
+            return text
+
+        logger.warning("Genie poll timed out — returning last response")
+        return text
 
     async def disconnect_all(self) -> None:
-        """Close all MCP server connections."""
+        """Clear all MCP server connections."""
         for name in list(self._connections.keys()):
             try:
-                # TODO: session.close()
                 del self._connections[name]
                 logger.info(f"Disconnected from MCP server: {name}")
             except Exception:

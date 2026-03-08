@@ -76,7 +76,8 @@ def create_production_app():
 
     # Configure MLflow tracing (non-fatal)
     try:
-        configure_tracing()
+        experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "deep-research-agent")
+        configure_tracing(experiment_name=experiment_name)
     except Exception:
         logger.warning("MLflow tracing setup failed — continuing without tracing",
                        exc_info=True)
@@ -102,6 +103,22 @@ def create_production_app():
     app.state.graph = graph
     app.state.mcp_manager = mcp_manager
     app.state.config = config
+
+    # Connect to MCP servers on startup (non-fatal — app works without MCP)
+    @app.on_event("startup")
+    async def _connect_mcp_servers():
+        try:
+            await mcp_manager.connect_all()
+            logger.info("MCP server connections established")
+        except Exception:
+            logger.warning(
+                "Failed to connect MCP servers — tool calls will fail",
+                exc_info=True,
+            )
+
+    @app.on_event("shutdown")
+    async def _disconnect_mcp_servers():
+        await mcp_manager.disconnect_all()
 
     # ── Debug / spike test endpoints (registered BEFORE StaticFiles mount) ──
 

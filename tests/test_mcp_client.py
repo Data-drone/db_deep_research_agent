@@ -1,9 +1,16 @@
 """Tests for MCP client manager."""
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from deep_research.config import MCPServerConfig
-from deep_research.mcp_client import MCPClientManager
+from deep_research.mcp_client import (
+    MCPClientManager,
+    _extract_text_from_call_result,
+    _parse_genie_async_response,
+)
 
 
 @pytest.fixture
@@ -32,7 +39,7 @@ def mock_server_configs():
         ),
         "vector_kb": MCPServerConfig(
             name="vector_kb",
-            url="https://test.databricks.net/api/2.0/mcp/vector-search/idx",
+            url="https://test.databricks.net/api/2.0/mcp/vector-search/cat/schema/idx",
             display_name="Knowledge Base",
             server_kind="managed",
             enabled=True,
@@ -41,6 +48,9 @@ def mock_server_configs():
             managed_type="vector_search",
         ),
     }
+
+
+# ── Sync filter/query tests (unchanged) ──
 
 
 def test_manager_filters_disabled_servers(mock_server_configs):
@@ -76,3 +86,196 @@ def test_manager_get_servers_by_capability(mock_server_configs):
     manager = MCPClientManager(mock_server_configs, token="test")
     read_only = manager.get_servers_by_capability("read")
     assert "genie_sales" in read_only
+
+
+# ── Helper function tests ──
+
+
+def test_extract_text_from_call_result_with_content():
+    """CallToolResult with .content list of TextContent items."""
+    item1 = SimpleNamespace(text="Hello ")
+    item2 = SimpleNamespace(text="World")
+    result = SimpleNamespace(content=[item1, item2])
+    assert _extract_text_from_call_result(result) == "Hello \nWorld"
+
+
+def test_extract_text_from_call_result_fallback():
+    """Falls back to str() when no .content attribute."""
+    assert _extract_text_from_call_result({"some": "dict"}) == "{'some': 'dict'}"
+
+
+def test_parse_genie_async_response_filtering():
+    text = (
+        'The query is being processed. Status: FILTERING_CONTEXT. '
+        'conversation_id: "conv-abc", message_id: "msg-def"'
+    )
+    result = _parse_genie_async_response(text)
+    assert result is not None
+    assert result["conversation_id"] == "conv-abc"
+    assert result["message_id"] == "msg-def"
+
+
+def test_parse_genie_async_response_json():
+    import json
+    text = json.dumps({
+        "status": "FILTERING_CONTEXT",
+        "conversation_id": "conv-123",
+        "message_id": "msg-456",
+    })
+    # The text contains FILTERING_CONTEXT so should match
+    result = _parse_genie_async_response(text)
+    assert result is not None
+    assert result["conversation_id"] == "conv-123"
+
+
+def test_parse_genie_async_response_completed():
+    """A completed response should return None (not a polling response)."""
+    text = "The total pipeline value is $4.2M across 127 deals."
+    result = _parse_genie_async_response(text)
+    assert result is None
+
+
+# ── Async connection/call tests ──
+
+
+def _make_mock_tool(name="query_space_123"):
+    return SimpleNamespace(name=name)
+
+
+@pytest.mark.asyncio
+async def test_connect_all_discovers_tools(mock_server_configs):
+    """connect_all should create DatabricksMCPClient and call alist_tools."""
+    manager = MCPClientManager(mock_server_configs, token="test")
+
+    mock_client = MagicMock()
+    mock_client.alist_tools = AsyncMock(return_value=[
+        _make_mock_tool("query_space_123"),
+        _make_mock_tool("poll_response_123"),
+    ])
+
+    mock_ws = MagicMock()
+
+    with patch.object(manager, "_create_workspace_client", return_value=mock_ws), \
+         patch("databricks_mcp.DatabricksMCPClient", return_value=mock_client):
+        await manager.connect_all()
+
+    # genie_sales and vector_kb should be connected (disabled_server excluded)
+    assert "genie_sales" in manager._connections
+    assert "vector_kb" in manager._connections
+    assert "disabled_server" not in manager._connections
+
+    conn = manager._connections["genie_sales"]
+    assert conn["query_tool"] == "query_space_123"
+    assert conn["poll_tool"] == "poll_response_123"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_vector_search(mock_server_configs):
+    """call_tool on a vector search server returns text result."""
+    manager = MCPClientManager(mock_server_configs, token="test")
+
+    mock_result = SimpleNamespace(
+        content=[SimpleNamespace(text="ANZ reported revenue of $10B in FY2024.")]
+    )
+    mock_client = MagicMock()
+    mock_client.acall_tool = AsyncMock(return_value=mock_result)
+
+    manager._connections["vector_kb"] = {
+        "client": mock_client,
+        "tools": [_make_mock_tool("cat__schema__idx__mcp__v1")],
+        "query_tool": "cat__schema__idx__mcp__v1",
+        "poll_tool": None,
+        "config": mock_server_configs["vector_kb"],
+    }
+
+    result = await manager.call_tool("vector_kb", "query", {"query": "ANZ revenue"})
+    assert "ANZ reported revenue" in result["result"]
+    assert result["source"] == "vector_kb"
+    mock_client.acall_tool.assert_called_once_with(
+        "cat__schema__idx__mcp__v1", {"query": "ANZ revenue"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_tool_genie_with_polling(mock_server_configs):
+    """call_tool on Genie server polls until complete."""
+    manager = MCPClientManager(mock_server_configs, token="test")
+
+    # First call returns async/polling response
+    async_result = SimpleNamespace(
+        content=[SimpleNamespace(
+            text='Status: FILTERING_CONTEXT. conversation_id: "c1", message_id: "m1"'
+        )]
+    )
+    # Poll returns still processing, then completed
+    poll_processing = SimpleNamespace(
+        content=[SimpleNamespace(
+            text='Status: EXECUTING_QUERY. conversation_id: "c1", message_id: "m1"'
+        )]
+    )
+    poll_done = SimpleNamespace(
+        content=[SimpleNamespace(text="Total pipeline: $5M")]
+    )
+
+    mock_client = MagicMock()
+    mock_client.acall_tool = AsyncMock(
+        side_effect=[async_result, poll_processing, poll_done]
+    )
+
+    manager._connections["genie_sales"] = {
+        "client": mock_client,
+        "tools": [
+            _make_mock_tool("query_space_123"),
+            _make_mock_tool("poll_response_123"),
+        ],
+        "query_tool": "query_space_123",
+        "poll_tool": "poll_response_123",
+        "config": mock_server_configs["genie_sales"],
+    }
+
+    # Patch sleep to avoid waiting in tests
+    with patch("deep_research.mcp_client.asyncio.sleep", new_callable=AsyncMock):
+        result = await manager.call_tool(
+            "genie_sales", "query", {"query": "total pipeline"}
+        )
+
+    assert "Total pipeline: $5M" in result["result"]
+    assert result["source"] == "genie_sales"
+    # Should have called: 1 query + 2 polls = 3 total
+    assert mock_client.acall_tool.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_call_tool_not_connected(mock_server_configs):
+    """call_tool raises RuntimeError if server not connected."""
+    manager = MCPClientManager(mock_server_configs, token="test")
+    with pytest.raises(RuntimeError, match="Not connected"):
+        await manager.call_tool("genie_sales", "query", {"query": "test"})
+
+
+@pytest.mark.asyncio
+async def test_connect_all_handles_failure(mock_server_configs):
+    """connect_all logs error but continues if one server fails."""
+    manager = MCPClientManager(mock_server_configs, token="test")
+
+    call_count = 0
+
+    def make_client(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        client = MagicMock()
+        if call_count == 1:
+            client.alist_tools = AsyncMock(side_effect=Exception("connection refused"))
+        else:
+            client.alist_tools = AsyncMock(return_value=[_make_mock_tool("tool1")])
+        return client
+
+    mock_ws = MagicMock()
+
+    with patch.object(manager, "_create_workspace_client", return_value=mock_ws), \
+         patch("databricks_mcp.DatabricksMCPClient", side_effect=make_client):
+        await manager.connect_all()
+
+    # One should have failed, one should have succeeded
+    # (genie_sales fails, vector_kb succeeds — or vice versa depending on dict ordering)
+    assert len(manager._connections) == 1
