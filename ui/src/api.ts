@@ -47,28 +47,86 @@ export function streamJob(
   onEvent: (event: { type: string; node?: string; result?: string; error?: string; content?: string }) => void,
   onError: (err: Error) => void
 ): () => void {
-  const es = new EventSource(`/api/research/${jobId}/stream`);
-  let receivedTerminal = false;
+  let cancelled = false;
+  let abortController = new AbortController();
 
-  es.onmessage = (msg) => {
+  async function readStream() {
     try {
-      const event = JSON.parse(msg.data);
-      onEvent(event);
-      if (["completed", "failed", "cancelled"].includes(event.type)) {
-        receivedTerminal = true;
-        es.close();
-      }
-    } catch {
-      // Ignore unparseable messages (keepalives)
-    }
-  };
+      const response = await fetch(`/api/research/${jobId}/stream`, {
+        credentials: "include",
+        signal: abortController.signal,
+        headers: { Accept: "text/event-stream" },
+      });
 
-  es.onerror = () => {
-    if (receivedTerminal) return;
-    es.close();
-    onError(new Error("SSE connection lost"));
-  };
+      if (!response.ok || !response.body) {
+        throw new Error(`Stream failed: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            onEvent(event);
+            if (["completed", "failed", "cancelled"].includes(event.type)) {
+              return; // Terminal event received
+            }
+          } catch {
+            // Ignore unparseable lines (keepalives, malformed)
+          }
+        }
+      }
+    } catch (err) {
+      if (cancelled) return;
+      // Stream failed — fall back to polling
+      await pollFallback();
+    }
+  }
+
+  async function pollFallback() {
+    while (!cancelled) {
+      try {
+        const status = await pollJob(jobId);
+        if (status.current_node) {
+          onEvent({ type: "node_started", node: status.current_node });
+        }
+        if (status.status === "completed") {
+          onEvent({ type: "completed", result: status.result || "" });
+          return;
+        }
+        if (status.status === "failed") {
+          onEvent({ type: "failed", error: status.error || "Research failed." });
+          return;
+        }
+        if (status.status === "cancelled") {
+          onEvent({ type: "cancelled" });
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+        onError(new Error("Failed to check research status."));
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+
+  readStream();
 
   // Return cleanup function
-  return () => es.close();
+  return () => {
+    cancelled = true;
+    abortController.abort();
+  };
 }
