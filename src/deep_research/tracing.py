@@ -23,6 +23,11 @@ except ImportError:
 def configure_tracing(experiment_name: str = "deep-research-agent") -> None:
     """Enable MLflow autologging for LangGraph if available.
 
+    Sets the tracking URI to 'databricks' so that traces are persisted to
+    the Databricks workspace MLflow server (not a local file store).
+    Uses run_tracer_inline=True for proper async context propagation
+    with LangGraph's astream/ainvoke.
+
     Handles both import absence and runtime failures gracefully.
     """
     if not MLFLOW_AVAILABLE:
@@ -30,9 +35,13 @@ def configure_tracing(experiment_name: str = "deep-research-agent") -> None:
         return
 
     try:
+        mlflow.set_tracking_uri("databricks")
         mlflow.set_experiment(experiment_name)
-        mlflow.langchain.autolog()
-        logger.info(f"MLflow tracing enabled (experiment: {experiment_name})")
+        mlflow.langchain.autolog(run_tracer_inline=True)
+        logger.info(
+            f"MLflow tracing enabled (experiment: {experiment_name}, "
+            f"tracking_uri: {mlflow.get_tracking_uri()})"
+        )
     except Exception:
         logger.warning("MLflow tracing setup failed — continuing without tracing",
                        exc_info=True)
