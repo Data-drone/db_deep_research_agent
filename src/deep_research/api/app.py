@@ -117,8 +117,8 @@ def create_app(use_mocks: bool = False) -> FastAPI:
     async def list_tools(request: Request):
         if use_mocks:
             return [
-                {"name": "genie_sales", "display_name": "Sales Data (Genie)", "risk_tier": "safe"},
-                {"name": "vector_search_kb", "display_name": "Knowledge Base", "risk_tier": "safe"},
+                {"name": "genie_aus_market", "display_name": "Australian Economic & Market Data (Genie)", "risk_tier": "safe"},
+                {"name": "knowledge_assistant", "display_name": "ASX FY2024 Annual Reports (Knowledge Assistant)", "risk_tier": "safe"},
             ]
         mcp_manager = getattr(request.app.state, "mcp_manager", None)
         if mcp_manager is None:

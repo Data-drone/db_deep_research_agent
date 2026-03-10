@@ -64,7 +64,7 @@ async def test_list_tools(client):
     tools = response.json()
     assert isinstance(tools, list)
     assert len(tools) == 2
-    assert tools[0]["name"] == "genie_sales"
+    assert tools[0]["name"] == "genie_aus_market"
 
 
 async def test_list_tools_from_mcp_manager():
@@ -74,10 +74,10 @@ async def test_list_tools_from_mcp_manager():
     a = create_app(use_mocks=False)
     mock_manager = MagicMock()
     mock_manager.get_available_servers.return_value = {
-        "genie_sales": MCPServerConfig(
-            name="genie_sales",
+        "genie_aus_market": MCPServerConfig(
+            name="genie_aus_market",
             url="mock://genie",
-            display_name="Sales Genie",
+            display_name="Australian Economic & Market Data (Genie)",
             server_kind="managed",
             risk_tier="safe",
         ),
@@ -90,8 +90,8 @@ async def test_list_tools_from_mcp_manager():
         assert response.status_code == 200
         tools = response.json()
         assert len(tools) == 1
-        assert tools[0]["name"] == "genie_sales"
-        assert tools[0]["display_name"] == "Sales Genie"
+        assert tools[0]["name"] == "genie_aus_market"
+        assert tools[0]["display_name"] == "Australian Economic & Market Data (Genie)"
 
 
 async def test_submit_research_no_graph(client):

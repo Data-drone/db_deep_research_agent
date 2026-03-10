@@ -1,86 +1,100 @@
 [
   {
-    "id": "vs-01",
-    "query": "What was ANZ's total revenue in 2024?",
-    "expected_tools": ["vector_search_anz"],
+    "id": "genie-01",
+    "query": "What are the top 5 ASX 200 companies by market capitalisation?",
+    "expected_tools": ["genie_aus_market"],
     "difficulty": "simple",
-    "expected_facets": ["2024 revenue figure"]
+    "expected_facets": ["company names", "market cap figures", "ranking"]
   },
   {
-    "id": "vs-02",
-    "query": "What were the key risk factors discussed in the ANZ 2024 annual report?",
-    "expected_tools": ["vector_search_anz"],
+    "id": "genie-02",
+    "query": "How has the Australian inflation rate trended over the past year?",
+    "expected_tools": ["genie_aus_market"],
     "difficulty": "medium",
-    "expected_facets": ["risk factors", "specific risks named"]
+    "expected_facets": ["inflation figures", "time series", "trend direction"]
   },
   {
-    "id": "vs-03",
-    "query": "How did ANZ's net interest margin change year over year?",
-    "expected_tools": ["vector_search_anz"],
+    "id": "genie-03",
+    "query": "Which sectors in the ASX 200 have the highest average dividend yield?",
+    "expected_tools": ["genie_aus_market"],
     "difficulty": "medium",
-    "expected_facets": ["NIM figures", "YoY change", "trend direction"]
+    "expected_facets": ["sector names", "dividend yields", "comparison"]
   },
   {
-    "id": "ga-01",
-    "query": "Which airport had the most passengers in the dataset?",
-    "expected_tools": ["genie_aviation"],
-    "difficulty": "simple",
-    "expected_facets": ["airport name", "passenger count"]
-  },
-  {
-    "id": "ga-02",
-    "query": "What are the top 5 airlines by passenger volume and how do they compare?",
-    "expected_tools": ["genie_aviation"],
+    "id": "genie-04",
+    "query": "Compare the stock price performance of BHP and RIO over the past 12 months.",
+    "expected_tools": ["genie_aus_market"],
     "difficulty": "medium",
-    "expected_facets": ["top 5 airlines", "passenger volumes", "comparison"]
+    "expected_facets": ["BHP price data", "RIO price data", "comparison", "trend"]
   },
   {
-    "id": "gs-01",
-    "query": "What is the total sales pipeline value?",
-    "expected_tools": ["genie_sales_pipeline"],
-    "difficulty": "simple",
-    "expected_facets": ["total pipeline value"]
-  },
-  {
-    "id": "gs-02",
-    "query": "Which sales stages have the most deals and what is the conversion rate?",
-    "expected_tools": ["genie_sales_pipeline"],
+    "id": "genie-05",
+    "query": "What are the current commodity price trends for iron ore and gold?",
+    "expected_tools": ["genie_aus_market"],
     "difficulty": "medium",
-    "expected_facets": ["deals per stage", "conversion rates"]
+    "expected_facets": ["iron ore price", "gold price", "trend direction"]
   },
   {
     "id": "ka-01",
-    "query": "What topics can the knowledge assistant help with?",
+    "query": "What are the main ESG commitments outlined in Westpac's FY2024 annual report?",
     "expected_tools": ["knowledge_assistant"],
     "difficulty": "simple",
-    "expected_facets": ["capability description"]
+    "expected_facets": ["ESG commitments", "specific targets or goals"]
   },
   {
     "id": "ka-02",
-    "query": "Explain the key regulatory requirements for Australian banking.",
+    "query": "How does QBE Insurance describe its approach to climate resilience?",
     "expected_tools": ["knowledge_assistant"],
     "difficulty": "medium",
-    "expected_facets": ["regulatory bodies", "key requirements"]
+    "expected_facets": ["climate strategy", "resilience measures", "risk assessment"]
+  },
+  {
+    "id": "ka-03",
+    "query": "What cybersecurity and data protection measures are described in the NAB annual report?",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "medium",
+    "expected_facets": ["cybersecurity measures", "data protection policies"]
+  },
+  {
+    "id": "ka-04",
+    "query": "Compare the diversity and inclusion strategies of Santos and Worley from their FY2024 reports.",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["Santos D&I strategy", "Worley D&I strategy", "comparison"]
+  },
+  {
+    "id": "ka-05",
+    "query": "What are the key financial highlights from Xero's FY2024 annual report?",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "medium",
+    "expected_facets": ["revenue", "financial metrics", "growth trends"]
   },
   {
     "id": "multi-01",
-    "query": "How does ANZ's financial performance compare to trends in the aviation industry?",
-    "expected_tools": ["vector_search_anz", "genie_aviation"],
+    "query": "How does NAB's market capitalisation compare to the ESG commitments in its annual report?",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
     "difficulty": "hard",
-    "expected_facets": ["ANZ financials", "aviation trends", "comparison"]
+    "expected_facets": ["NAB market cap", "ESG commitments", "synthesis"]
   },
   {
     "id": "multi-02",
-    "query": "What insights from the ANZ report could inform our sales pipeline strategy?",
-    "expected_tools": ["vector_search_anz", "genie_sales_pipeline"],
+    "query": "Compare the stock performance of mining companies BHP and Evolution Mining with their sustainability strategies from annual reports.",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
     "difficulty": "hard",
-    "expected_facets": ["ANZ insights", "pipeline relevance", "strategic recommendations"]
+    "expected_facets": ["stock performance data", "sustainability strategies", "cross-source comparison"]
   },
   {
     "id": "multi-03",
-    "query": "Summarize ANZ's 2024 outlook and supplement with any relevant knowledge base context.",
-    "expected_tools": ["vector_search_anz", "knowledge_assistant"],
+    "query": "What is Pilbara Minerals' market position based on its share price and what does its annual report say about lithium market outlook?",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
     "difficulty": "hard",
-    "expected_facets": ["2024 outlook", "supplementary context", "synthesis"]
+    "expected_facets": ["share price data", "lithium outlook", "market position synthesis"]
+  },
+  {
+    "id": "multi-04",
+    "query": "Analyse the relationship between Australian wage growth data and the workforce strategies described in Suncorp's annual report.",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["wage growth data", "workforce strategy", "cross-domain analysis"]
   }
 ]

@@ -79,7 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description="Test the research agent")
     parser.add_argument("query", help="Research query")
     parser.add_argument(
-        "--tools", default="genie_sales", help="Comma-separated tool names"
+        "--tools", default="genie_aus_market", help="Comma-separated tool names"
     )
     parser.add_argument("--mode", default="chat", choices=["chat", "report"])
     args = parser.parse_args()

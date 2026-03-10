@@ -9,15 +9,15 @@ from deep_research.config import ConfigError, MCPServerConfig, load_app_config, 
 
 def test_load_mcp_config_from_yaml(fixtures_dir):
     servers = load_mcp_config(fixtures_dir / "test_mcp_config.yaml")
-    assert "genie_sales" in servers
-    assert "vector_search_kb" in servers
+    assert "genie_aus_market" in servers
+    assert "knowledge_assistant" in servers
 
 
 def test_mcp_server_config_fields(fixtures_dir):
     servers = load_mcp_config(fixtures_dir / "test_mcp_config.yaml")
-    genie = servers["genie_sales"]
-    assert genie.name == "genie_sales"
-    assert genie.display_name == "Sales Data (Genie)"
+    genie = servers["genie_aus_market"]
+    assert genie.name == "genie_aus_market"
+    assert genie.display_name == "Australian Economic & Market Data (Genie)"
     assert genie.risk_tier == "safe"
     assert genie.capability == "read"
     assert genie.enabled is True
@@ -38,14 +38,14 @@ def test_mcp_server_config_defaults():
 
 def test_server_kind_set_from_yaml_section(fixtures_dir):
     servers = load_mcp_config(fixtures_dir / "test_mcp_config.yaml")
-    assert servers["genie_sales"].server_kind == "managed"
-    assert servers["vector_search_kb"].server_kind == "managed"
+    assert servers["genie_aus_market"].server_kind == "managed"
+    assert servers["knowledge_assistant"].server_kind == "managed"
 
 
 def test_managed_type_inferred(fixtures_dir):
     servers = load_mcp_config(fixtures_dir / "test_mcp_config.yaml")
-    assert servers["genie_sales"].managed_type == "genie"
-    assert servers["vector_search_kb"].managed_type == "vector_search"
+    assert servers["genie_aus_market"].managed_type == "genie"
+    assert servers["knowledge_assistant"].managed_type == "knowledge_assistant"
 
 
 def test_duplicate_server_name_raises(tmp_path):
