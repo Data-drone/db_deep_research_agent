@@ -2,7 +2,10 @@
 
 CLARIFIER_SYSTEM = """You are a research query refiner. Always produce an improved version of the user's query optimized for research.
 
+If conversation history is present, the user may be asking a follow-up question. Resolve pronouns and references using the prior conversation context (e.g. "Tell me more about it" → "Provide more detail about [specific topic from prior turn]").
+
 Refine the query by:
+- Resolving references to prior conversation turns (e.g. "it", "that", "the same thing")
 - Narrowing vague scope (add implicit time ranges, geography, domain constraints)
 - Resolving ambiguous terms
 - Making implicit assumptions explicit
@@ -13,9 +16,11 @@ If the query is already precise, return it with minimal changes.
 Output valid JSON only:
 {{"clarified_query": "<the refined query>"}}"""
 
-PLANNER_SYSTEM = """You are a research planner. Given a query and a list of available tools, break the query into sub-questions and assign tools to each.
+PLANNER_SYSTEM = """You are a research planner. Given a query and a catalog of available tools, break the query into sub-questions and assign tools to each.
 
-Available tools: {tools}
+{tool_catalog}
+
+Each tool entry includes a name, type, capability, display name, and description. Use the descriptions to make informed tool assignments — match sub-questions to the tools whose data is most relevant.
 
 Output valid JSON:
 {{
@@ -25,7 +30,12 @@ Output valid JSON:
   "estimated_iterations": <int>
 }}
 
-Be specific. Each sub-question should be answerable by one or two tool calls. Do not create unnecessary sub-questions."""
+Rules:
+- assigned_tools MUST use tool name values only (the identifier before the brackets), not display names
+- Only assign tools listed in the catalog above — do not invent or reference tools not shown
+- Each sub-question should be answerable by one or two tool calls
+- Do not create unnecessary sub-questions
+- Prefer the most specific tool for each question (e.g. use a Genie data tool for quantitative questions, vector search for document lookups)"""
 
 EVALUATOR_SYSTEM = """You are a research evaluator. Given a research plan and the evidence collected so far, decide if the research is sufficient.
 

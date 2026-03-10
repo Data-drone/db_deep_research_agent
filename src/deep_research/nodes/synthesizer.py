@@ -28,7 +28,23 @@ async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
     )
 
     # Build context for synthesis
-    context_parts = [f"User query: {query}"]
+    context_parts = []
+
+    # Include conversation context for follow-up queries
+    conversation_history = state.get("conversation_history", [])
+    if conversation_history:
+        context_parts.append("Conversation context (prior turns):")
+        for msg in conversation_history[-6:]:  # Last 3 exchanges max
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            # Truncate long messages to keep prompt manageable
+            if len(content) > 500:
+                content = content[:500] + "..."
+            context_parts.append(f"  {role}: {content}")
+        context_parts.append("(Use prior conversation as background context only; prioritize current query and evidence.)")
+        context_parts.append("")
+
+    context_parts.append(f"User query: {query}")
 
     if findings:
         context_parts.append(f"Key findings: {', '.join(findings.key_findings)}")

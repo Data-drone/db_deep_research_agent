@@ -46,3 +46,20 @@ def test_initial_state_default_budget():
     state = create_initial_state(user_query="test", selected_tools=[])
     assert state["budget"].max_iterations == 5
     assert state["budget"].max_tool_calls == 20
+
+
+def test_initial_state_session_defaults():
+    state = create_initial_state(user_query="test", selected_tools=[])
+    assert state["conversation_history"] == []
+    assert state["prior_evidence"] == []
+
+
+def test_initial_state_with_session_context():
+    history = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}]
+    state = create_initial_state(
+        user_query="follow-up",
+        selected_tools=["genie"],
+        conversation_history=history,
+    )
+    assert len(state["conversation_history"]) == 2
+    assert state["conversation_history"][0]["role"] == "user"

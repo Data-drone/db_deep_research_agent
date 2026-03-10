@@ -17,9 +17,11 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
     """Evaluate evidence sufficiency with per-sub-question verdicts."""
     plan = state.get("research_plan", [])
     evidence = state.get("evidence", [])
+    prior_evidence = state.get("prior_evidence", [])
     iteration = state.get("iteration_count", 0)
     budget = state.get("budget")
     max_iter = budget.max_iterations if budget else 5
+    total_evidence_count = len(evidence) + len(prior_evidence)
 
     # Build per-sub-question evidence bundles with full text + relevance scores
     sq_details = []
@@ -37,7 +39,7 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
 
     prompt = EVALUATOR_SYSTEM_V2.format(
         sub_question_details="\n\n".join(sq_details),
-        evidence_count=len(evidence),
+        evidence_count=total_evidence_count,
         iteration=iteration,
         max_iterations=max_iter,
     )

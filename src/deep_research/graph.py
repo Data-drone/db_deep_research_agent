@@ -57,7 +57,7 @@ def build_research_graph(
 
     # Worker nodes
     graph.add_node("clarifier", partial(clarifier_node, model=model))
-    graph.add_node("planner", partial(planner_node, model=model, critic_model=_critic))
+    graph.add_node("planner", partial(planner_node, model=model, critic_model=_critic, mcp_manager=mcp_manager))
     graph.add_node("authorizer", partial(authorizer_node, model=model))
     graph.add_node("query_adapter", partial(query_adapter_node, model=model))
     graph.add_node("researcher", partial(researcher_node, model=model, mcp_manager=mcp_manager))

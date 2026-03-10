@@ -58,6 +58,10 @@ class ResearchState(TypedDict, total=False):
     trace_id: str
     job_id: str
 
+    # Session context (from prior turns)
+    conversation_history: list[dict[str, str]]
+    prior_evidence: list[Evidence]
+
     # Job control
     cancelled: bool
 
@@ -73,6 +77,8 @@ def create_initial_state(
     job_id: str = "",
     trace_id: str = "",
     budget: Budget | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+    prior_evidence: list[Evidence] | None = None,
 ) -> ResearchState:
     """Create a fresh state for a new research query."""
     return ResearchState(
@@ -100,5 +106,7 @@ def create_initial_state(
         verification_attempts=0,
         trace_id=trace_id,
         job_id=job_id,
+        conversation_history=conversation_history or [],
+        prior_evidence=prior_evidence or [],
         cancelled=False,
     )

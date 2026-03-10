@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from deep_research.api.jobs import JobManager, JobStatus
+from deep_research.session import SessionManager
 from deep_research.state import create_initial_state
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     tools: list[str] = Field(default_factory=list)
     output_mode: Literal["chat", "report"] = "chat"
+    session_id: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -36,6 +38,8 @@ async def _run_graph(
     job_manager: JobManager,
     job_id: str,
     initial_state: dict,
+    session_manager: SessionManager | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Execute the research graph in the background, updating job state."""
     try:
@@ -63,14 +67,27 @@ async def _run_graph(
             final_output = accumulated_state.get("final_output", "")
             if not final_output:
                 final_output = "Research completed but produced no output."
+            final_state = accumulated_state
         else:
             result = await graph.ainvoke(initial_state)
             final_output = result.get("final_output", "")
             if not final_output:
                 final_output = "Research completed but produced no output."
+            final_state = result
 
         job_manager.update_state(job_id, "completed", result=final_output)
         job_manager.push_event(job_id, {"type": "completed", "result": final_output})
+
+        # Accumulate results into session
+        if session_manager and session_id:
+            session_manager.add_turn(session_id, "assistant", final_output)
+            evidence = final_state.get("evidence", [])
+            if evidence:
+                session_manager.add_evidence(session_id, evidence)
+            tool_calls = final_state.get("tool_call_log", [])
+            if tool_calls:
+                session_manager.add_tool_calls(session_id, tool_calls)
+
     except Exception as exc:
         logger.exception(f"Graph execution failed for job {job_id}")
         job_manager.update_state(
@@ -90,6 +107,7 @@ def create_app(use_mocks: bool = False) -> FastAPI:
     )
 
     job_manager = JobManager()
+    session_manager = SessionManager()
 
     @app.get("/health")
     async def health():
@@ -127,6 +145,15 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             )
             return {"job_id": job_id, "status": "failed"}
 
+        # Get or create session — capture prior history BEFORE adding current turn
+        session = session_manager.get_or_create(req.session_id)
+        session_created = session.session_id != req.session_id
+        prior_history = list(session.conversation_history)
+        prior_evidence = list(session.accumulated_evidence)
+
+        # Record user turn only after graph is confirmed available
+        session_manager.add_turn(session.session_id, "user", req.query)
+
         config = getattr(request.app.state, "config", None)
         budget = None
         if config:
@@ -144,11 +171,24 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             job_id=job_id,
             trace_id=f"trace-{uuid.uuid4().hex[:12]}",
             budget=budget,
+            conversation_history=prior_history,
+            prior_evidence=prior_evidence,
         )
 
-        asyncio.create_task(_run_graph(graph, job_manager, job_id, initial_state))
+        asyncio.create_task(
+            _run_graph(
+                graph, job_manager, job_id, initial_state,
+                session_manager=session_manager,
+                session_id=session.session_id,
+            )
+        )
 
-        return {"job_id": job_id, "status": "pending"}
+        return {
+            "job_id": job_id,
+            "status": "pending",
+            "session_id": session.session_id,
+            "session_created": session_created,
+        }
 
     @app.get("/api/research/{job_id}")
     async def get_research_status(job_id: str):
@@ -210,6 +250,20 @@ def create_app(use_mocks: bool = False) -> FastAPI:
         except KeyError:
             raise HTTPException(status_code=404, detail="Job not found")
         return {"job_id": job_id, "status": "cancelled"}
+
+    @app.get("/api/sessions/{session_id}")
+    async def get_session(session_id: str):
+        session = session_manager.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+        return session.to_dict()
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        deleted = session_manager.delete_session(session_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"status": "deleted", "session_id": session_id}
 
     @app.post("/api/feedback")
     async def submit_feedback(req: FeedbackRequest):

@@ -59,7 +59,38 @@ async def _generate_perspectives(model: Any, query: str) -> list[str]:
         return []
 
 
-async def planner_node(state: ResearchState, *, model: Any, critic_model: Any | None = None) -> dict:
+def _build_tool_catalog(tools: list[str], mcp_manager: Any | None = None) -> str:
+    """Build a rich tool catalog string for the planner prompt.
+
+    Only includes selected tools — the planner must not assign tools
+    that were not selected by the user.
+    """
+    if not mcp_manager:
+        return "Available tools: " + ", ".join(sorted(tools))
+
+    available = mcp_manager.get_available_servers()
+    lines = ["Available tools:"]
+    for tool_name in sorted(tools):
+        cfg = available.get(tool_name)
+        if cfg:
+            tool_type = cfg.managed_type or "general"
+            capability = cfg.capability or "general"
+            display_name = cfg.display_name or cfg.name
+            description = cfg.description or "No description available."
+            lines.append(
+                f"- {cfg.name} [{tool_type}, {capability}]: "
+                f'"{display_name}" — {description}'
+            )
+        else:
+            lines.append(f"- {tool_name}: (no description available)")
+
+    return "\n".join(lines)
+
+
+async def planner_node(
+    state: ResearchState, *, model: Any, critic_model: Any | None = None,
+    mcp_manager: Any | None = None,
+) -> dict:
     """Create or extend research plan with sub-questions and tool assignments.
 
     On first invocation, generates perspectives using the critic model
@@ -77,6 +108,19 @@ async def planner_node(state: ResearchState, *, model: Any, critic_model: Any | 
     perspectives = existing_perspectives
     if not existing_plan and not perspectives:
         perspectives = await _generate_perspectives(critic_model or model, query)
+
+    # Summarize prior evidence from previous session turns
+    prior_evidence = state.get("prior_evidence", [])
+    prior_summary = ""
+    if prior_evidence:
+        topics = {e.title for e in prior_evidence if e.title}
+        tools_used = {e.tool_that_produced_it for e in prior_evidence if e.tool_that_produced_it}
+        prior_summary = (
+            f"Prior research ({len(prior_evidence)} evidence items from previous turns):\n"
+            f"- Topics covered: {', '.join(sorted(topics)[:10])}\n"
+            f"- Tools used: {', '.join(sorted(tools_used))}\n"
+            f"Avoid duplicating already-covered topics unless the query asks for more depth or comparison."
+        )
 
     # Build context-aware prompt for replanning
     user_content = query
@@ -99,6 +143,8 @@ async def planner_node(state: ResearchState, *, model: Any, critic_model: Any | 
             context_parts.append(
                 f"Unsupported claims to address: {', '.join(verification_result.unsupported_claims)}"
             )
+        if prior_summary:
+            context_parts.append(prior_summary)
         context_parts.append("Generate ONLY new sub-questions to fill the gaps.")
         user_content = "\n".join(context_parts)
     elif perspectives:
@@ -107,10 +153,15 @@ async def planner_node(state: ResearchState, *, model: Any, critic_model: Any | 
         user_content = (
             f"Query: {query}\n\n"
             f"Research from these perspectives:\n{perspective_text}\n\n"
+            f"{prior_summary}"
             f"Generate sub-questions that cover the query from each perspective."
         )
+    elif prior_summary:
+        # Follow-up query with prior context but no perspectives yet
+        user_content = f"Query: {query}\n\n{prior_summary}"
 
-    prompt = PLANNER_SYSTEM.format(tools=", ".join(tools))
+    tool_catalog = _build_tool_catalog(tools, mcp_manager)
+    prompt = PLANNER_SYSTEM.format(tool_catalog=tool_catalog)
 
     response = await model.ainvoke([
         {"role": "system", "content": prompt},
@@ -134,13 +185,23 @@ async def planner_node(state: ResearchState, *, model: Any, critic_model: Any | 
             }
         return {"research_plan": existing_plan, "perspectives": perspectives}
 
+    allowed_tools = set(tools)
     new_sub_questions = []
     for sq in result.get("sub_questions", []):
+        raw_tools = sq.get("assigned_tools", tools)
+        valid_tools = [t for t in raw_tools if t in allowed_tools]
+        if not valid_tools:
+            valid_tools = list(tools)
+            if raw_tools != tools:
+                logger.warning(
+                    "Planner assigned unknown tools %s, falling back to %s",
+                    raw_tools, valid_tools,
+                )
         new_sub_questions.append(
             SubQuestion(
                 subquestion_id=f"sq-{uuid.uuid4().hex[:8]}",
                 question=sq.get("question", query),
-                assigned_tools=sq.get("assigned_tools", tools),
+                assigned_tools=valid_tools,
                 iteration_created=iteration,
             )
         )
