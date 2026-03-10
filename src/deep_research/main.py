@@ -150,10 +150,27 @@ def create_production_app():
             cwd_contents = sorted(os.listdir(cwd))
         except Exception as e:
             cwd_contents = [f"error: {e}"]
+
+        # Check UI candidate paths
+        ui_candidates = {}
+        for label, p in [
+            ("__file__ based", str(Path(__file__).parent.parent.parent / "ui" / "dist")),
+            ("cwd based", str(Path(cwd) / "ui" / "dist")),
+            ("SOURCE_CODE_PATH", str(Path(os.environ.get("DATABRICKS_SOURCE_CODE_PATH", "")) / "ui" / "dist")),
+        ]:
+            ui_candidates[label] = {
+                "path": p,
+                "exists": Path(p).exists(),
+                "has_index": (Path(p) / "index.html").exists() if Path(p).exists() else False,
+            }
+
         return {
             "cwd": cwd,
+            "cwd_contents": cwd_contents,
             "__file__": __file__,
             "app_initialized": True,
+            "ui_candidates": ui_candidates,
+            "env_SOURCE_CODE_PATH": os.environ.get("DATABRICKS_SOURCE_CODE_PATH", "not set"),
         }
 
     # SSE spike test — verifies Databricks Apps proxy streams events incrementally.
@@ -186,10 +203,17 @@ def create_production_app():
         Path(__file__).parent.parent.parent / "ui" / "dist",
         Path(os.getcwd()) / "ui" / "dist",
     ]
+    # Also check the source_code_path used by Databricks Apps
+    source_code_path = os.environ.get("DATABRICKS_SOURCE_CODE_PATH", "")
+    if source_code_path:
+        candidates.insert(0, Path(source_code_path) / "ui" / "dist")
+
     actual_ui_dist = None
     for candidate in candidates:
-        logger.info(f"Checking for UI at: {candidate} (exists: {candidate.exists()})")
-        if candidate.exists() and (candidate / "index.html").exists():
+        exists = candidate.exists()
+        has_index = exists and (candidate / "index.html").exists()
+        logger.info(f"Checking for UI at: {candidate} (exists: {exists}, has_index: {has_index})")
+        if has_index:
             actual_ui_dist = candidate
             break
 
@@ -200,6 +224,21 @@ def create_production_app():
         logger.info(f"Serving React UI from {actual_ui_dist}")
     else:
         logger.info("No UI build found — API-only mode")
+        # Provide a helpful root endpoint instead of 404
+        from fastapi.responses import JSONResponse
+
+        @app.get("/")
+        async def root():
+            return JSONResponse({
+                "status": "ok",
+                "message": "Deep Research Agent API is running. UI not found.",
+                "endpoints": {
+                    "health": "/health",
+                    "tools": "/api/tools",
+                    "research": "POST /api/research",
+                    "debug": "/debug/paths",
+                },
+            })
 
     logger.info("Application initialization complete")
     return app
