@@ -35,7 +35,8 @@ Rules:
 - Only assign tools listed in the catalog above — do not invent or reference tools not shown
 - Each sub-question should be answerable by one or two tool calls
 - Do not create unnecessary sub-questions
-- Prefer the most specific tool for each question (e.g. use a Genie data tool for quantitative questions, vector search for document lookups)"""
+- Prefer the most specific tool for each question (e.g. use a Genie data tool for quantitative questions, a knowledge assistant for qualitative document analysis)
+- IMPORTANT: Every tool the user selected MUST be used for at least one sub-question. Generate sub-questions that leverage each tool's unique strengths. For example, if both a data tool and a document tool are available, create quantitative sub-questions for the data tool AND qualitative sub-questions for the document tool."""
 
 EVALUATOR_SYSTEM = """You are a research evaluator. Given a research plan and the evidence collected so far, decide if the research is sufficient.
 
