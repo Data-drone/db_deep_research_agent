@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from functools import partial
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from langgraph.graph import END, StateGraph
 
@@ -37,11 +40,18 @@ def _should_continue(state: ResearchState) -> str:
 
 
 def _should_revise(state: ResearchState) -> str:
-    """Routing function after verifier: revise or finish."""
+    """Routing function after verifier: always finish.
+
+    The verifier→planner re-research loop is disabled because it re-runs
+    the entire 7-node pipeline (including Genie polling), adding 60-90s
+    per loop. Unsupported claims are logged but not re-researched.
+    """
     vr = state.get("verification_result")
-    attempts = state.get("verification_attempts", 0)
-    if vr and not vr.all_claims_supported and attempts < 2:
-        return "planner"
+    if vr and not vr.all_claims_supported:
+        logger.info(
+            "Verifier found unsupported claims: %s — skipping re-research",
+            vr.unsupported_claims[:3],
+        )
     return END
 
 
@@ -85,9 +95,6 @@ def build_research_graph(
     })
     graph.add_edge("compressor", "synthesizer")
     graph.add_edge("synthesizer", "verifier")
-    graph.add_conditional_edges("verifier", _should_revise, {
-        "planner": "planner",
-        END: END,
-    })
+    graph.add_edge("verifier", END)
 
     return graph.compile()

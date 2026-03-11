@@ -30,7 +30,7 @@ class _MockGraph:
     async def ainvoke(self, state):
         return {"final_output": self._final_output}
 
-    async def astream(self, state, stream_mode="updates"):
+    async def astream(self, state, stream_mode="updates", config=None):
         yield {"synthesizer": {"final_output": self._final_output}}
         yield {"verifier": {"verification_result": None}}
 
@@ -146,7 +146,7 @@ async def test_cancel_research(graph_client):
     hang_event = asyncio.Event()
 
     class _SlowGraph:
-        async def astream(self, state, stream_mode="updates"):
+        async def astream(self, state, stream_mode="updates", config=None):
             await hang_event.wait()
             yield {"synthesizer": {"final_output": "done"}}
             yield {"verifier": {"verification_result": None}}
@@ -200,7 +200,7 @@ async def test_run_graph_failure():
     """Graph exception should mark job as failed."""
 
     class _FailGraph:
-        async def astream(self, state, stream_mode="updates"):
+        async def astream(self, state, stream_mode="updates", config=None):
             raise RuntimeError("LLM call failed")
             yield  # make it an async generator  # noqa: unreachable
 
@@ -286,7 +286,7 @@ async def test_run_graph_injects_job_context():
     captured_state = {}
 
     class _CaptureGraph:
-        async def astream(self, state, stream_mode="updates"):
+        async def astream(self, state, stream_mode="updates", config=None):
             captured_state.update(state)
             yield {"synthesizer": {"final_output": "done"}}
             yield {"verifier": {"verification_result": None}}
@@ -302,7 +302,7 @@ async def test_run_graph_pushes_events():
     job_id = jm.create_job(query="test", tools=[])
 
     class _MultiNodeGraph:
-        async def astream(self, state, stream_mode="updates"):
+        async def astream(self, state, stream_mode="updates", config=None):
             yield {"clarifier": {"clarified_query": "test"}}
             yield {"planner": {"research_plan": []}}
             yield {"synthesizer": {"final_output": "done"}}

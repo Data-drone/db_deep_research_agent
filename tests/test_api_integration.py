@@ -16,7 +16,7 @@ class _MockGraph:
     async def ainvoke(self, state):
         return {"final_output": self._final_output}
 
-    async def astream(self, state, stream_mode="updates"):
+    async def astream(self, state, stream_mode="updates", config=None):
         yield {"synthesizer": {"final_output": self._final_output}}
         yield {"verifier": {"verification_result": None}}
 
@@ -84,7 +84,7 @@ class TestUserResearchFlow:
         hang_event = asyncio.Event()
 
         class _SlowGraph:
-            async def astream(self, state, stream_mode="updates"):
+            async def astream(self, state, stream_mode="updates", config=None):
                 await hang_event.wait()
                 yield {"synthesizer": {"final_output": "done"}}
                 yield {"verifier": {"verification_result": None}}

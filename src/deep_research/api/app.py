@@ -52,7 +52,11 @@ async def _run_graph(
         # Try streaming for node-level progress tracking
         if hasattr(graph, "astream"):
             accumulated_state: dict = {}
-            async for event in graph.astream(initial_state, stream_mode="updates"):
+            async for event in graph.astream(
+                initial_state,
+                stream_mode="updates",
+                config={"recursion_limit": 50},
+            ):
                 for node_name in event:
                     logger.info(f"Job {job_id}: completed node '{node_name}'")
                     job_manager.update_state(
