@@ -11,6 +11,7 @@ export function useResearch() {
   const activeJobIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
+  const sessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -143,9 +144,12 @@ export function useResearch() {
       stopStream();
 
       try {
-        const { job_id } = await submitResearch(query, tools, outputMode);
+        const { job_id, session_id } = await submitResearch(
+          query, tools, outputMode, sessionIdRef.current ?? undefined
+        );
         if (!mountedRef.current) return;
 
+        sessionIdRef.current = session_id;
         activeJobIdRef.current = job_id;
         setCurrentJob({ job_id, status: "pending" });
 

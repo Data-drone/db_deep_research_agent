@@ -11,12 +11,14 @@ export async function fetchTools(): Promise<Tool[]> {
 export async function submitResearch(
   query: string,
   tools: string[],
-  outputMode: "chat" | "report"
-): Promise<{ job_id: string; status: string }> {
+  outputMode: "chat" | "report",
+  sessionId?: string
+): Promise<{ job_id: string; status: string; session_id: string }> {
   const res = await client.post("/api/research", {
     query,
     tools,
     output_mode: outputMode,
+    session_id: sessionId,
   });
   return res.data;
 }
