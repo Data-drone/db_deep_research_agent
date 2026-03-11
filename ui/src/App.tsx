@@ -21,7 +21,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Deep Research Agent</h1>
+        <h1>Research and Chat Agent</h1>
         {hasReport && (
           <div className="view-tabs">
             <button
