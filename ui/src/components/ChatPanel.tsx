@@ -29,6 +29,13 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const sampleQuestions = [
+    "What was CBA's closing share price last Friday?",
+    "Compare the FY2024 revenue of the top 4 ASX banks",
+    "What are the key risk factors mentioned in ANZ's annual report?",
+    "Summarise the latest RBA interest rate decision and its impact on equities",
+  ];
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentJob]);
@@ -46,8 +53,20 @@ export function ChatPanel({
       <div className="messages-list">
         {messages.length === 0 && (
           <div className="empty-state">
-            <h3>Deep Research Agent</h3>
-            <p>Ask a question to start researching.</p>
+            <h3>Research and Chat Agent</h3>
+            <p>Ask a question to start researching, or try one of these:</p>
+            <div className="sample-questions">
+              {sampleQuestions.map((q) => (
+                <button
+                  key={q}
+                  className="sample-question"
+                  onClick={() => onSend(q, selectedTools, outputMode, responseMode)}
+                  disabled={isLoading}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {messages.map((msg) => (
