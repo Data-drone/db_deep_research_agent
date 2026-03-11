@@ -43,62 +43,73 @@ async def _run_graph(
     session_id: str | None = None,
 ) -> None:
     """Execute the research graph in the background, updating job state."""
-    try:
-        job_manager.update_state(job_id, "running")
+    from deep_research.tracing import trace_research
 
-        # Inject job context so nodes (e.g. synthesizer) can push token events
-        initial_state["_job_manager"] = job_manager
-        initial_state["_job_id"] = job_id
+    query = initial_state.get("user_query", "")
+    tools = initial_state.get("selected_tools", [])
+    output_mode = initial_state.get("output_mode", "chat")
 
-        # Try streaming for node-level progress tracking
-        if hasattr(graph, "astream"):
-            accumulated_state: dict = {}
-            async for event in graph.astream(
-                initial_state,
-                stream_mode="updates",
-                config={"recursion_limit": 50},
-            ):
-                for node_name in event:
-                    logger.info(f"Job {job_id}: completed node '{node_name}'")
-                    job_manager.update_state(
-                        job_id, "running", current_node=node_name
-                    )
-                    job_manager.push_event(job_id, {"type": "node_started", "node": node_name})
-                    # Merge each node's partial update into accumulated state
-                    node_output = event[node_name]
-                    if isinstance(node_output, dict):
-                        accumulated_state.update(node_output)
+    async with trace_research(job_id, query, tools, output_mode, mode="research") as trace_ctx:
+        try:
+            job_manager.update_state(job_id, "running")
 
-            final_output = accumulated_state.get("final_output", "")
-            if not final_output:
-                final_output = "Research completed but produced no output."
-            final_state = accumulated_state
-        else:
-            result = await graph.ainvoke(initial_state)
-            final_output = result.get("final_output", "")
-            if not final_output:
-                final_output = "Research completed but produced no output."
-            final_state = result
+            # Inject job context so nodes (e.g. synthesizer) can push token events
+            initial_state["_job_manager"] = job_manager
+            initial_state["_job_id"] = job_id
 
-        job_manager.update_state(job_id, "completed", result=final_output)
-        job_manager.push_event(job_id, {"type": "completed", "result": final_output})
+            # Try streaming for node-level progress tracking
+            if hasattr(graph, "astream"):
+                accumulated_state: dict = {}
+                async for event in graph.astream(
+                    initial_state,
+                    stream_mode="updates",
+                    config={"recursion_limit": 50},
+                ):
+                    for node_name in event:
+                        logger.info(f"Job {job_id}: completed node '{node_name}'")
+                        job_manager.update_state(
+                            job_id, "running", current_node=node_name
+                        )
+                        job_manager.push_event(job_id, {"type": "node_started", "node": node_name})
+                        # Merge each node's partial update into accumulated state
+                        node_output = event[node_name]
+                        if isinstance(node_output, dict):
+                            accumulated_state.update(node_output)
 
-        # Accumulate results into session
-        if session_manager and session_id:
-            session_manager.add_turn(session_id, "assistant", final_output)
-            evidence = final_state.get("evidence", [])
-            if evidence:
-                session_manager.add_evidence(session_id, evidence)
-            tool_calls = final_state.get("tool_call_log", [])
-            if tool_calls:
-                session_manager.add_tool_calls(session_id, tool_calls)
+                final_output = accumulated_state.get("final_output", "")
+                if not final_output:
+                    final_output = "Research completed but produced no output."
+                final_state = accumulated_state
+            else:
+                result = await graph.ainvoke(initial_state)
+                final_output = result.get("final_output", "")
+                if not final_output:
+                    final_output = "Research completed but produced no output."
+                final_state = result
 
-    except Exception as exc:
-        logger.exception(f"Graph execution failed for job {job_id}")
-        job_manager.update_state(
-            job_id, "failed", error=f"Research execution failed: {exc}"
-        )
-        job_manager.push_event(job_id, {"type": "failed", "error": f"Research execution failed: {exc}"})
+            job_manager.update_state(job_id, "completed", result=final_output)
+            job_manager.push_event(job_id, {"type": "completed", "result": final_output})
+            trace_ctx["output"] = final_output
+            trace_ctx["status"] = "completed"
+
+            # Accumulate results into session
+            if session_manager and session_id:
+                session_manager.add_turn(session_id, "assistant", final_output)
+                evidence = final_state.get("evidence", [])
+                if evidence:
+                    session_manager.add_evidence(session_id, evidence)
+                tool_calls = final_state.get("tool_call_log", [])
+                if tool_calls:
+                    session_manager.add_tool_calls(session_id, tool_calls)
+
+        except Exception as exc:
+            logger.exception(f"Graph execution failed for job {job_id}")
+            job_manager.update_state(
+                job_id, "failed", error=f"Research execution failed: {exc}"
+            )
+            job_manager.push_event(job_id, {"type": "failed", "error": f"Research execution failed: {exc}"})
+            trace_ctx["status"] = "failed"
+            trace_ctx["output"] = str(exc)
 
 
 async def _run_quick_reply(
@@ -114,74 +125,80 @@ async def _run_quick_reply(
 ) -> None:
     """Execute a quick reply: optional tool calls + single LLM response."""
     from deep_research.prompts import QUICK_REPLY_SYSTEM
+    from deep_research.tracing import trace_research
 
-    try:
-        job_manager.update_state(job_id, "running", current_node="quick_reply")
-        job_manager.push_event(job_id, {"type": "node_started", "node": "quick_reply"})
+    async with trace_research(job_id, query, tools, "chat", mode="quick") as trace_ctx:
+        try:
+            job_manager.update_state(job_id, "running", current_node="quick_reply")
+            job_manager.push_event(job_id, {"type": "node_started", "node": "quick_reply"})
 
-        # 1. Call each selected tool in parallel (one query per tool)
-        tool_results: list[dict[str, str]] = []
-        if tools and mcp_manager:
-            async def _call_one(tool_name: str) -> dict[str, str]:
-                try:
-                    result = await mcp_manager.call_tool(
-                        tool_name, "query", {"query": query}
-                    )
-                    return {"tool": tool_name, "result": result.get("result", "")}
-                except Exception as e:
-                    logger.warning(f"Quick reply tool call failed: {tool_name} - {e}")
-                    return {"tool": tool_name, "result": f"(tool call failed: {e})"}
+            # 1. Call each selected tool in parallel (one query per tool)
+            tool_results: list[dict[str, str]] = []
+            if tools and mcp_manager:
+                async def _call_one(tool_name: str) -> dict[str, str]:
+                    try:
+                        result = await mcp_manager.call_tool(
+                            tool_name, "query", {"query": query}
+                        )
+                        return {"tool": tool_name, "result": result.get("result", "")}
+                    except Exception as e:
+                        logger.warning(f"Quick reply tool call failed: {tool_name} - {e}")
+                        return {"tool": tool_name, "result": f"(tool call failed: {e})"}
 
-            results = await asyncio.gather(
-                *[_call_one(t) for t in tools],
-                return_exceptions=True,
+                results = await asyncio.gather(
+                    *[_call_one(t) for t in tools],
+                    return_exceptions=True,
+                )
+                for r in results:
+                    if isinstance(r, dict):
+                        tool_results.append(r)
+
+            # 2. Build tool context
+            tool_context_parts = []
+            if tool_results:
+                tool_context_parts.append("Tool results:")
+                for tr in tool_results:
+                    tool_context_parts.append(f"\n[{tr['tool']}]:\n{tr['result']}")
+            tool_context = "\n".join(tool_context_parts) if tool_context_parts else "No tools were queried."
+
+            # 3. Build conversation context
+            conv_parts = []
+            if conversation_history:
+                conv_parts.append("Previous conversation:")
+                for turn in conversation_history[-6:]:  # Last 3 exchanges
+                    role = turn.get("role", "user")
+                    content = turn.get("content", "")
+                    conv_parts.append(f"{role}: {content[:500]}")
+            conversation_context = "\n".join(conv_parts) if conv_parts else ""
+
+            # 4. Single LLM call
+            system_prompt = QUICK_REPLY_SYSTEM.format(
+                tool_context=tool_context,
+                conversation_context=conversation_context,
             )
-            for r in results:
-                if isinstance(r, dict):
-                    tool_results.append(r)
+            response = await model.ainvoke([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query},
+            ])
+            reply = response.content if hasattr(response, "content") else str(response)
 
-        # 2. Build tool context
-        tool_context_parts = []
-        if tool_results:
-            tool_context_parts.append("Tool results:")
-            for tr in tool_results:
-                tool_context_parts.append(f"\n[{tr['tool']}]:\n{tr['result']}")
-        tool_context = "\n".join(tool_context_parts) if tool_context_parts else "No tools were queried."
+            # 5. Complete job
+            job_manager.update_state(job_id, "completed", result=reply)
+            job_manager.push_event(job_id, {"type": "completed", "result": reply})
+            trace_ctx["output"] = reply
+            trace_ctx["status"] = "completed"
 
-        # 3. Build conversation context
-        conv_parts = []
-        if conversation_history:
-            conv_parts.append("Previous conversation:")
-            for turn in conversation_history[-6:]:  # Last 3 exchanges
-                role = turn.get("role", "user")
-                content = turn.get("content", "")
-                conv_parts.append(f"{role}: {content[:500]}")
-        conversation_context = "\n".join(conv_parts) if conv_parts else ""
+            # 6. Update session
+            session_manager.add_turn(session_id, "assistant", reply)
 
-        # 4. Single LLM call
-        system_prompt = QUICK_REPLY_SYSTEM.format(
-            tool_context=tool_context,
-            conversation_context=conversation_context,
-        )
-        response = await model.ainvoke([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query},
-        ])
-        reply = response.content if hasattr(response, "content") else str(response)
-
-        # 5. Complete job
-        job_manager.update_state(job_id, "completed", result=reply)
-        job_manager.push_event(job_id, {"type": "completed", "result": reply})
-
-        # 6. Update session
-        session_manager.add_turn(session_id, "assistant", reply)
-
-    except Exception as exc:
-        logger.exception(f"Quick reply failed for job {job_id}")
-        job_manager.update_state(
-            job_id, "failed", error=f"Quick reply failed: {exc}"
-        )
-        job_manager.push_event(job_id, {"type": "failed", "error": f"Quick reply failed: {exc}"})
+        except Exception as exc:
+            logger.exception(f"Quick reply failed for job {job_id}")
+            job_manager.update_state(
+                job_id, "failed", error=f"Quick reply failed: {exc}"
+            )
+            job_manager.push_event(job_id, {"type": "failed", "error": f"Quick reply failed: {exc}"})
+            trace_ctx["status"] = "failed"
+            trace_ctx["output"] = str(exc)
 
 
 def create_app(use_mocks: bool = False) -> FastAPI:

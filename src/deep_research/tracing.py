@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
-from typing import Any, Generator
+from contextlib import asynccontextmanager, contextmanager
+from typing import Any, AsyncGenerator, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +21,14 @@ except ImportError:
 
 
 def configure_tracing(experiment_name: str = "deep-research-agent") -> None:
-    """Enable MLflow autologging for LangGraph if available.
+    """Enable MLflow tracing for the research agent.
 
     Sets the tracking URI to 'databricks' so that traces are persisted to
     the Databricks workspace MLflow server (not a local file store).
-    Uses run_tracer_inline=True for proper async context propagation
-    with LangGraph's astream/ainvoke.
+
+    Uses mlflow.langchain.autolog() for automatic LangChain/LangGraph tracing.
+    Also provides explicit trace_research / trace_quick_reply wrappers for
+    reliable tracing from background async tasks.
 
     Handles both import absence and runtime failures gracefully.
     """
@@ -37,7 +39,7 @@ def configure_tracing(experiment_name: str = "deep-research-agent") -> None:
     try:
         mlflow.set_tracking_uri("databricks")
         mlflow.set_experiment(experiment_name)
-        mlflow.langchain.autolog(run_tracer_inline=True)
+        mlflow.langchain.autolog()
         logger.info(
             f"MLflow tracing enabled (experiment: {experiment_name}, "
             f"tracking_uri: {mlflow.get_tracking_uri()})"
@@ -45,6 +47,65 @@ def configure_tracing(experiment_name: str = "deep-research-agent") -> None:
     except Exception:
         logger.warning("MLflow tracing setup failed — continuing without tracing",
                        exc_info=True)
+
+
+@asynccontextmanager
+async def trace_research(
+    job_id: str,
+    query: str,
+    tools: list[str],
+    output_mode: str,
+    mode: str = "research",
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Async context manager that wraps a research execution in an MLflow trace.
+
+    Creates a top-level trace so that graph/LLM calls inside are captured.
+    Always yields — tracing failures never block execution.
+
+    Usage:
+        async with trace_research(job_id, query, tools, output_mode) as ctx:
+            # run graph or quick reply
+            ctx["output"] = result
+    """
+    ctx: dict[str, Any] = {}
+
+    if not MLFLOW_AVAILABLE:
+        yield ctx
+        return
+
+    trace = None
+    try:
+        trace = mlflow.start_trace(
+            name=f"{mode}_research",
+            attributes={
+                "job_id": job_id,
+                "query": query[:500],
+                "tools": ",".join(tools),
+                "output_mode": output_mode,
+                "mode": mode,
+            },
+        )
+        ctx["trace"] = trace
+        logger.info(f"MLflow trace started for job {job_id}")
+    except Exception:
+        logger.warning(f"Failed to start MLflow trace for job {job_id}",
+                       exc_info=True)
+
+    try:
+        yield ctx
+    finally:
+        if trace is not None:
+            try:
+                output_preview = str(ctx.get("output", ""))[:1000]
+                status = ctx.get("status", "UNSET")
+                mlflow.end_trace(
+                    trace.request_id,
+                    attributes={"output_preview": output_preview, "final_status": status},
+                )
+                logger.info(f"MLflow trace ended for job {job_id} (status={status})")
+            except Exception:
+                logger.warning(f"Failed to end MLflow trace for job {job_id}",
+                               exc_info=True)
 
 
 @contextmanager
