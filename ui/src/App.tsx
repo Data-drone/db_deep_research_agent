@@ -3,7 +3,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { ToolSelector } from "./components/ToolSelector";
 import { ReportPanel } from "./components/ReportPanel";
 import { useResearch } from "./hooks/useResearch";
-import type { OutputMode } from "./types";
+import type { OutputMode, ResponseMode } from "./types";
 import "./App.css";
 
 function App() {
@@ -11,6 +11,7 @@ function App() {
     useResearch();
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [outputMode, setOutputMode] = useState<OutputMode>("chat");
+  const [responseMode, setResponseMode] = useState<ResponseMode>("quick");
   const [viewMode, setViewMode] = useState<"chat" | "report">("chat");
 
   const lastAssistantMsg = [...messages]
@@ -46,6 +47,8 @@ function App() {
             onToolsChange={setSelectedTools}
             outputMode={outputMode}
             onOutputModeChange={setOutputMode}
+            responseMode={responseMode}
+            onResponseModeChange={setResponseMode}
           />
         </aside>
         <main className="main-content">
@@ -63,6 +66,7 @@ function App() {
               isLoading={isLoading}
               selectedTools={selectedTools}
               outputMode={outputMode}
+              responseMode={responseMode}
               onSend={send}
               onCancel={cancel}
               onRate={rate}

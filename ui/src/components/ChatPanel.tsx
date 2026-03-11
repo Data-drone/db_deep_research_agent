@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ProgressBar } from "./ProgressBar";
-import type { Message, JobStatus, OutputMode } from "../types";
+import type { Message, JobStatus, OutputMode, ResponseMode } from "../types";
 
 interface Props {
   messages: Message[];
@@ -9,7 +9,8 @@ interface Props {
   isLoading: boolean;
   selectedTools: string[];
   outputMode: OutputMode;
-  onSend: (query: string, tools: string[], mode: OutputMode) => void;
+  responseMode: ResponseMode;
+  onSend: (query: string, tools: string[], mode: OutputMode, responseMode: ResponseMode) => void;
   onCancel: () => void;
   onRate: (id: string, rating: "thumbs_up" | "thumbs_down") => void;
 }
@@ -20,6 +21,7 @@ export function ChatPanel({
   isLoading,
   selectedTools,
   outputMode,
+  responseMode,
   onSend,
   onCancel,
   onRate,
@@ -35,7 +37,7 @@ export function ChatPanel({
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
-    onSend(trimmed, selectedTools, outputMode);
+    onSend(trimmed, selectedTools, outputMode, responseMode);
     setInput("");
   };
 

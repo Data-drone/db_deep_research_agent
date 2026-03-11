@@ -23,3 +23,5 @@ export interface JobStatus {
 }
 
 export type OutputMode = "chat" | "report";
+
+export type ResponseMode = "quick" | "research";

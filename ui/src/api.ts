@@ -12,12 +12,14 @@ export async function submitResearch(
   query: string,
   tools: string[],
   outputMode: "chat" | "report",
+  responseMode: "quick" | "research",
   sessionId?: string
 ): Promise<{ job_id: string; status: string; session_id: string }> {
   const res = await client.post("/api/research", {
     query,
     tools,
     output_mode: outputMode,
+    response_mode: responseMode,
     session_id: sessionId,
   });
   return res.data;

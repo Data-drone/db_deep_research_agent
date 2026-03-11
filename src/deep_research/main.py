@@ -120,6 +120,7 @@ def create_production_app():
 
     # Store graph and manager on app state for endpoint access
     app.state.graph = graph
+    app.state.model = model
     app.state.mcp_manager = mcp_manager
     app.state.config = config
 

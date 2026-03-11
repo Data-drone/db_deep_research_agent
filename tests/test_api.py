@@ -108,11 +108,12 @@ async def test_submit_research_no_graph(client):
 
 
 async def test_submit_research_with_graph(graph_client):
-    """With a graph, research returns pending and runs in background."""
+    """With a graph, research mode returns pending and runs in background."""
     response = await graph_client.post("/api/research", json={
         "query": "What was Q3 revenue?",
         "tools": [],
         "output_mode": "chat",
+        "response_mode": "research",
     })
     assert response.status_code == 200
     data = response.json()
@@ -326,3 +327,138 @@ async def test_run_graph_pushes_events():
     assert len(terminal) == 1
     assert terminal[0]["type"] == "completed"
     assert terminal[0]["result"] == "done"
+
+
+# ── Quick reply tests ──
+
+
+class _MockModel:
+    """Mock LLM model for quick reply tests."""
+
+    def __init__(self, reply="Quick answer"):
+        self._reply = reply
+
+    async def ainvoke(self, messages):
+        from types import SimpleNamespace
+        return SimpleNamespace(content=self._reply)
+
+
+class _MockMCPManager:
+    """Mock MCP manager for quick reply tests."""
+
+    async def call_tool(self, server_name, tool_name, arguments):
+        return {"result": f"Data from {server_name}"}
+
+
+@pytest.fixture
+def app_with_model():
+    """App with a mock model for quick reply."""
+    a = create_app()
+    a.state.graph = _MockGraph()
+    a.state.model = _MockModel()
+    a.state.mcp_manager = _MockMCPManager()
+    a.state.config = None
+    return a
+
+
+@pytest.fixture
+async def quick_client(app_with_model):
+    transport = ASGITransport(app=app_with_model)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def test_quick_reply_completes(quick_client):
+    """Quick reply mode returns a response without running the graph."""
+    response = await quick_client.post("/api/research", json={
+        "query": "What was CBA's closing price?",
+        "tools": ["genie_aus_market"],
+        "response_mode": "quick",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "pending"
+    assert "session_id" in data
+
+    # Let background task complete
+    await asyncio.sleep(0.2)
+
+    status = await quick_client.get(f"/api/research/{data['job_id']}")
+    assert status.json()["status"] == "completed"
+    assert "Quick answer" in status.json()["result"]
+
+
+async def test_quick_reply_no_tools(quick_client):
+    """Quick reply with no tools still works (direct LLM call)."""
+    response = await quick_client.post("/api/research", json={
+        "query": "What is inflation?",
+        "tools": [],
+        "response_mode": "quick",
+    })
+    data = response.json()
+    assert data["status"] == "pending"
+
+    await asyncio.sleep(0.2)
+
+    status = await quick_client.get(f"/api/research/{data['job_id']}")
+    assert status.json()["status"] == "completed"
+
+
+async def test_research_mode_uses_graph(quick_client):
+    """Research mode still goes through the graph."""
+    response = await quick_client.post("/api/research", json={
+        "query": "Deep analysis needed",
+        "tools": [],
+        "response_mode": "research",
+        "output_mode": "chat",
+    })
+    data = response.json()
+    assert data["status"] == "pending"
+
+    await asyncio.sleep(0.2)
+
+    status = await quick_client.get(f"/api/research/{data['job_id']}")
+    assert status.json()["status"] == "completed"
+    assert status.json()["result"] == "Test research result"
+
+
+async def test_default_response_mode_is_quick(quick_client):
+    """Default response_mode is 'quick' when not specified."""
+    response = await quick_client.post("/api/research", json={
+        "query": "Quick question",
+        "tools": [],
+    })
+    data = response.json()
+    assert data["status"] == "pending"
+
+    await asyncio.sleep(0.2)
+
+    status = await quick_client.get(f"/api/research/{data['job_id']}")
+    # Should complete via quick reply (model returns "Quick answer")
+    assert status.json()["status"] == "completed"
+    assert "Quick answer" in status.json()["result"]
+
+
+async def test_quick_reply_session_continuity(quick_client):
+    """Quick reply stores session_id and supports follow-ups."""
+    # First query
+    r1 = await quick_client.post("/api/research", json={
+        "query": "First question",
+        "tools": [],
+        "response_mode": "quick",
+    })
+    session_id = r1.json()["session_id"]
+    await asyncio.sleep(0.2)
+
+    # Follow-up with same session
+    r2 = await quick_client.post("/api/research", json={
+        "query": "Follow up",
+        "tools": [],
+        "response_mode": "quick",
+        "session_id": session_id,
+    })
+    assert r2.json()["session_id"] == session_id
+    await asyncio.sleep(0.2)
+
+    status = await quick_client.get(f"/api/research/{r2.json()['job_id']}")
+    assert status.json()["status"] == "completed"

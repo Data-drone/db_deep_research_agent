@@ -24,6 +24,7 @@ class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     tools: list[str] = Field(default_factory=list)
     output_mode: Literal["chat", "report"] = "chat"
+    response_mode: Literal["quick", "research"] = "quick"
     session_id: str | None = None
 
 
@@ -100,6 +101,89 @@ async def _run_graph(
         job_manager.push_event(job_id, {"type": "failed", "error": f"Research execution failed: {exc}"})
 
 
+async def _run_quick_reply(
+    model: Any,
+    mcp_manager: Any,
+    job_manager: JobManager,
+    job_id: str,
+    query: str,
+    tools: list[str],
+    session_manager: SessionManager,
+    session_id: str,
+    conversation_history: list[dict[str, str]],
+) -> None:
+    """Execute a quick reply: optional tool calls + single LLM response."""
+    from deep_research.prompts import QUICK_REPLY_SYSTEM
+
+    try:
+        job_manager.update_state(job_id, "running", current_node="quick_reply")
+        job_manager.push_event(job_id, {"type": "node_started", "node": "quick_reply"})
+
+        # 1. Call each selected tool in parallel (one query per tool)
+        tool_results: list[dict[str, str]] = []
+        if tools and mcp_manager:
+            async def _call_one(tool_name: str) -> dict[str, str]:
+                try:
+                    result = await mcp_manager.call_tool(
+                        tool_name, "query", {"query": query}
+                    )
+                    return {"tool": tool_name, "result": result.get("result", "")}
+                except Exception as e:
+                    logger.warning(f"Quick reply tool call failed: {tool_name} - {e}")
+                    return {"tool": tool_name, "result": f"(tool call failed: {e})"}
+
+            results = await asyncio.gather(
+                *[_call_one(t) for t in tools],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, dict):
+                    tool_results.append(r)
+
+        # 2. Build tool context
+        tool_context_parts = []
+        if tool_results:
+            tool_context_parts.append("Tool results:")
+            for tr in tool_results:
+                tool_context_parts.append(f"\n[{tr['tool']}]:\n{tr['result']}")
+        tool_context = "\n".join(tool_context_parts) if tool_context_parts else "No tools were queried."
+
+        # 3. Build conversation context
+        conv_parts = []
+        if conversation_history:
+            conv_parts.append("Previous conversation:")
+            for turn in conversation_history[-6:]:  # Last 3 exchanges
+                role = turn.get("role", "user")
+                content = turn.get("content", "")
+                conv_parts.append(f"{role}: {content[:500]}")
+        conversation_context = "\n".join(conv_parts) if conv_parts else ""
+
+        # 4. Single LLM call
+        system_prompt = QUICK_REPLY_SYSTEM.format(
+            tool_context=tool_context,
+            conversation_context=conversation_context,
+        )
+        response = await model.ainvoke([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ])
+        reply = response.content if hasattr(response, "content") else str(response)
+
+        # 5. Complete job
+        job_manager.update_state(job_id, "completed", result=reply)
+        job_manager.push_event(job_id, {"type": "completed", "result": reply})
+
+        # 6. Update session
+        session_manager.add_turn(session_id, "assistant", reply)
+
+    except Exception as exc:
+        logger.exception(f"Quick reply failed for job {job_id}")
+        job_manager.update_state(
+            job_id, "failed", error=f"Quick reply failed: {exc}"
+        )
+        job_manager.push_event(job_id, {"type": "failed", "error": f"Quick reply failed: {exc}"})
+
+
 def create_app(use_mocks: bool = False) -> FastAPI:
     app = FastAPI(title="Deep Research Agent", version="0.1.0")
 
@@ -142,50 +226,75 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             query=req.query, tools=req.tools, output_mode=req.output_mode
         )
 
-        graph = getattr(request.app.state, "graph", None)
-        if graph is None:
-            job_manager.update_state(
-                job_id, "failed", error="Research graph not initialized"
-            )
-            return {"job_id": job_id, "status": "failed"}
-
         # Get or create session — capture prior history BEFORE adding current turn
         session = session_manager.get_or_create(req.session_id)
         session_created = session.session_id != req.session_id
         prior_history = list(session.conversation_history)
         prior_evidence = list(session.accumulated_evidence)
 
-        # Record user turn only after graph is confirmed available
+        # Record user turn
         session_manager.add_turn(session.session_id, "user", req.query)
 
-        config = getattr(request.app.state, "config", None)
-        budget = None
-        if config:
-            from deep_research.models import Budget
-            budget = Budget(
-                max_iterations=config.max_iterations,
-                max_tool_calls=config.max_tool_calls,
-                time_cap_seconds=config.time_cap_seconds,
+        if req.response_mode == "quick":
+            # Quick reply path: direct LLM call with optional tool calls
+            model = getattr(request.app.state, "model", None)
+            if model is None:
+                job_manager.update_state(
+                    job_id, "failed", error="LLM model not initialized"
+                )
+                return {"job_id": job_id, "status": "failed", "session_id": session.session_id}
+
+            mcp_manager = getattr(request.app.state, "mcp_manager", None)
+            asyncio.create_task(
+                _run_quick_reply(
+                    model=model,
+                    mcp_manager=mcp_manager,
+                    job_manager=job_manager,
+                    job_id=job_id,
+                    query=req.query,
+                    tools=req.tools,
+                    session_manager=session_manager,
+                    session_id=session.session_id,
+                    conversation_history=prior_history,
+                )
+            )
+        else:
+            # Deep research path: full graph pipeline
+            graph = getattr(request.app.state, "graph", None)
+            if graph is None:
+                job_manager.update_state(
+                    job_id, "failed", error="Research graph not initialized"
+                )
+                return {"job_id": job_id, "status": "failed", "session_id": session.session_id}
+
+            config = getattr(request.app.state, "config", None)
+            budget = None
+            if config:
+                from deep_research.models import Budget
+                budget = Budget(
+                    max_iterations=config.max_iterations,
+                    max_tool_calls=config.max_tool_calls,
+                    time_cap_seconds=config.time_cap_seconds,
+                )
+
+            initial_state = create_initial_state(
+                user_query=req.query,
+                selected_tools=req.tools,
+                output_mode=req.output_mode,
+                job_id=job_id,
+                trace_id=f"trace-{uuid.uuid4().hex[:12]}",
+                budget=budget,
+                conversation_history=prior_history,
+                prior_evidence=prior_evidence,
             )
 
-        initial_state = create_initial_state(
-            user_query=req.query,
-            selected_tools=req.tools,
-            output_mode=req.output_mode,
-            job_id=job_id,
-            trace_id=f"trace-{uuid.uuid4().hex[:12]}",
-            budget=budget,
-            conversation_history=prior_history,
-            prior_evidence=prior_evidence,
-        )
-
-        asyncio.create_task(
-            _run_graph(
-                graph, job_manager, job_id, initial_state,
-                session_manager=session_manager,
-                session_id=session.session_id,
+            asyncio.create_task(
+                _run_graph(
+                    graph, job_manager, job_id, initial_state,
+                    session_manager=session_manager,
+                    session_id=session.session_id,
+                )
             )
-        )
 
         return {
             "job_id": job_id,

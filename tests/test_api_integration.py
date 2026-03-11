@@ -21,11 +21,18 @@ class _MockGraph:
         yield {"verifier": {"verification_result": None}}
 
 
+class _MockModel:
+    async def ainvoke(self, messages):
+        from types import SimpleNamespace
+        return SimpleNamespace(content="Quick mock reply")
+
+
 @pytest.fixture
 def app():
     """Create app with mock dependencies and a mock graph."""
     a = create_app(use_mocks=True)
     a.state.graph = _MockGraph()
+    a.state.model = _MockModel()
     a.state.mcp_manager = None
     a.state.config = None
     return a
@@ -49,6 +56,7 @@ class TestUserResearchFlow:
                 "query": "What was Q3 revenue?",
                 "tools": ["genie_sales"],
                 "output_mode": "chat",
+                "response_mode": "research",
             },
         )
         assert response.status_code == 200
@@ -64,6 +72,7 @@ class TestUserResearchFlow:
                 "query": "What was Q3 revenue?",
                 "tools": ["genie_sales"],
                 "output_mode": "chat",
+                "response_mode": "research",
             },
         )
         job_id = submit.json()["job_id"]
@@ -97,6 +106,7 @@ class TestUserResearchFlow:
                 "query": "Deep analysis of everything",
                 "tools": ["genie_sales", "vector_search_kb"],
                 "output_mode": "report",
+                "response_mode": "research",
             },
         )
         job_id = submit.json()["job_id"]

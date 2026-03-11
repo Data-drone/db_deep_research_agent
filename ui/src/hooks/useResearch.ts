@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { submitResearch, streamJob, cancelJob, submitFeedback } from "../api";
-import type { Message, JobStatus, OutputMode } from "../types";
+import type { Message, JobStatus, OutputMode, ResponseMode } from "../types";
 
 export function useResearch() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -127,7 +127,7 @@ export function useResearch() {
   );
 
   const send = useCallback(
-    async (query: string, tools: string[], outputMode: OutputMode) => {
+    async (query: string, tools: string[], outputMode: OutputMode, responseMode: ResponseMode) => {
       if (isLoading) return;
 
       setError(null);
@@ -145,7 +145,7 @@ export function useResearch() {
 
       try {
         const { job_id, session_id } = await submitResearch(
-          query, tools, outputMode, sessionIdRef.current ?? undefined
+          query, tools, outputMode, responseMode, sessionIdRef.current ?? undefined
         );
         if (!mountedRef.current) return;
 

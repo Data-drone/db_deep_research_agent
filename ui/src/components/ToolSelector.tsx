@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { fetchTools } from "../api";
-import type { OutputMode, Tool } from "../types";
+import type { OutputMode, ResponseMode, Tool } from "../types";
 
 interface Props {
   selectedTools: string[];
   onToolsChange: (tools: string[]) => void;
   outputMode: OutputMode;
   onOutputModeChange: (mode: OutputMode) => void;
+  responseMode: ResponseMode;
+  onResponseModeChange: (mode: ResponseMode) => void;
 }
 
 export function ToolSelector({
@@ -14,6 +16,8 @@ export function ToolSelector({
   onToolsChange,
   outputMode,
   onOutputModeChange,
+  responseMode,
+  onResponseModeChange,
 }: Props) {
   const [tools, setTools] = useState<Tool[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -57,29 +61,55 @@ export function ToolSelector({
         ))}
       </ul>
 
-      <div className="output-mode-selector">
-        <h3>Output Mode</h3>
+      <div className="response-mode-selector">
+        <h3>Response Mode</h3>
         <label>
           <input
             type="radio"
-            name="outputMode"
-            value="chat"
-            checked={outputMode === "chat"}
-            onChange={() => onOutputModeChange("chat")}
+            name="responseMode"
+            value="quick"
+            checked={responseMode === "quick"}
+            onChange={() => onResponseModeChange("quick")}
           />
-          Chat
+          Quick Reply
         </label>
         <label>
           <input
             type="radio"
-            name="outputMode"
-            value="report"
-            checked={outputMode === "report"}
-            onChange={() => onOutputModeChange("report")}
+            name="responseMode"
+            value="research"
+            checked={responseMode === "research"}
+            onChange={() => onResponseModeChange("research")}
           />
-          Report
+          Deep Research
         </label>
       </div>
+
+      {responseMode === "research" && (
+        <div className="output-mode-selector">
+          <h3>Output Format</h3>
+          <label>
+            <input
+              type="radio"
+              name="outputMode"
+              value="chat"
+              checked={outputMode === "chat"}
+              onChange={() => onOutputModeChange("chat")}
+            />
+            Chat
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="outputMode"
+              value="report"
+              checked={outputMode === "report"}
+              onChange={() => onOutputModeChange("report")}
+            />
+            Report
+          </label>
+        </div>
+      )}
     </div>
   );
 }
