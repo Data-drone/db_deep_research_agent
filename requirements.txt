@@ -1,0 +1,8 @@
+langgraph>=0.2.0
+langchain-core>=0.3.0
+databricks-langchain>=0.1.0
+databricks-mcp>=0.9.0
+mlflow>=3.0.0
+pyyaml>=6.0
+pydantic>=2.0
+httpx>=0.27.0

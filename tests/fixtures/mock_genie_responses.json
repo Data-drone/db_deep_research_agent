@@ -1,0 +1,17 @@
+{
+    "revenue": {
+        "result": "Q3 2025 revenue was $12.4M, representing 15% YoY growth. Product revenue $8.1M, services revenue $4.3M.",
+        "source": "genie_sales",
+        "table": "catalog.sales.quarterly_revenue"
+    },
+    "churn": {
+        "result": "Customer churn rate for Q3 was 4.2%, down from 5.1% in Q2. Enterprise churn was 1.8%, SMB churn was 7.6%.",
+        "source": "genie_sales",
+        "table": "catalog.sales.customer_metrics"
+    },
+    "top customers": {
+        "result": "Top 5 customers by ARR: Acme Corp ($1.2M), Beta Inc ($890K), Gamma Ltd ($720K), Delta Co ($650K), Epsilon ($540K).",
+        "source": "genie_sales",
+        "table": "catalog.sales.customer_arr"
+    }
+}

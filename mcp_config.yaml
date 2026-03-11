@@ -1,0 +1,37 @@
+managed_servers:
+  genie_aus_market:
+    url: "https://adb-984752964297111.11.azuredatabricks.net/api/2.0/mcp/genie/01f11c3216621aa2908a52e69cce95a9"
+    display_name: "Australian Economic & Market Data (Genie)"
+    enabled: true
+    risk_tier: "safe"
+    capability: "read"
+    managed_type: "genie"
+    description: >-
+      Query structured Australian economic and market data via natural language.
+      Covers ASX 200 company data (stock prices, market caps, dividends, financial metrics, sector breakdowns),
+      Australian economic indicators (inflation, wage growth, employment, retail spending, business lending),
+      commodity prices, FX rates, and major market/equity/yield indices.
+      Best for quantitative questions — returns SQL query results with natural language summaries.
+      Can segment by date, region, industry, company, commodity, or economic indicator.
+      Limitations: daily/monthly/quarterly resolution only (no intraday), Australian-focused
+      (no international company financials), no ESG or analyst forecast data.
+
+  knowledge_assistant:
+    url: "https://adb-984752964297111.11.azuredatabricks.net/serving-endpoints/ka-e042a90f-endpoint/invocations"
+    display_name: "ASX FY2024 Annual Reports (Knowledge Assistant)"
+    enabled: true
+    risk_tier: "safe"
+    capability: "read"
+    managed_type: "knowledge_assistant"
+    description: >-
+      Search curated FY2024 annual reports and sustainability reports from ASX-listed companies.
+      Covers companies including QBE Insurance, Suncorp, Westpac, NAB, Evolution Mining,
+      Pilbara Minerals, Santos, Worley, SEEK, and Xero.
+      Best for qualitative questions about corporate strategy, ESG commitments, governance frameworks,
+      climate resilience, human rights policies, data/cyber security, diversity, social impact,
+      and detailed financial commentary from annual reports.
+      Limitations: FY2024 reports only, limited to the companies listed above,
+      no real-time data or quantitative market metrics (use the Genie tool for those).
+
+custom_servers:
+  # Future custom MCP servers hosted on Databricks Apps

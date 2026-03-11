@@ -1,0 +1,100 @@
+[
+  {
+    "id": "genie-01",
+    "query": "What are the top 5 ASX 200 companies by market capitalisation?",
+    "expected_tools": ["genie_aus_market"],
+    "difficulty": "simple",
+    "expected_facets": ["company names", "market cap figures", "ranking"]
+  },
+  {
+    "id": "genie-02",
+    "query": "How has the Australian inflation rate trended over the past year?",
+    "expected_tools": ["genie_aus_market"],
+    "difficulty": "medium",
+    "expected_facets": ["inflation figures", "time series", "trend direction"]
+  },
+  {
+    "id": "genie-03",
+    "query": "Which sectors in the ASX 200 have the highest average dividend yield?",
+    "expected_tools": ["genie_aus_market"],
+    "difficulty": "medium",
+    "expected_facets": ["sector names", "dividend yields", "comparison"]
+  },
+  {
+    "id": "genie-04",
+    "query": "Compare the stock price performance of BHP and RIO over the past 12 months.",
+    "expected_tools": ["genie_aus_market"],
+    "difficulty": "medium",
+    "expected_facets": ["BHP price data", "RIO price data", "comparison", "trend"]
+  },
+  {
+    "id": "genie-05",
+    "query": "What are the current commodity price trends for iron ore and gold?",
+    "expected_tools": ["genie_aus_market"],
+    "difficulty": "medium",
+    "expected_facets": ["iron ore price", "gold price", "trend direction"]
+  },
+  {
+    "id": "ka-01",
+    "query": "What are the main ESG commitments outlined in Westpac's FY2024 annual report?",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "simple",
+    "expected_facets": ["ESG commitments", "specific targets or goals"]
+  },
+  {
+    "id": "ka-02",
+    "query": "How does QBE Insurance describe its approach to climate resilience?",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "medium",
+    "expected_facets": ["climate strategy", "resilience measures", "risk assessment"]
+  },
+  {
+    "id": "ka-03",
+    "query": "What cybersecurity and data protection measures are described in the NAB annual report?",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "medium",
+    "expected_facets": ["cybersecurity measures", "data protection policies"]
+  },
+  {
+    "id": "ka-04",
+    "query": "Compare the diversity and inclusion strategies of Santos and Worley from their FY2024 reports.",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["Santos D&I strategy", "Worley D&I strategy", "comparison"]
+  },
+  {
+    "id": "ka-05",
+    "query": "What are the key financial highlights from Xero's FY2024 annual report?",
+    "expected_tools": ["knowledge_assistant"],
+    "difficulty": "medium",
+    "expected_facets": ["revenue", "financial metrics", "growth trends"]
+  },
+  {
+    "id": "multi-01",
+    "query": "How does NAB's market capitalisation compare to the ESG commitments in its annual report?",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["NAB market cap", "ESG commitments", "synthesis"]
+  },
+  {
+    "id": "multi-02",
+    "query": "Compare the stock performance of mining companies BHP and Evolution Mining with their sustainability strategies from annual reports.",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["stock performance data", "sustainability strategies", "cross-source comparison"]
+  },
+  {
+    "id": "multi-03",
+    "query": "What is Pilbara Minerals' market position based on its share price and what does its annual report say about lithium market outlook?",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["share price data", "lithium outlook", "market position synthesis"]
+  },
+  {
+    "id": "multi-04",
+    "query": "Analyse the relationship between Australian wage growth data and the workforce strategies described in Suncorp's annual report.",
+    "expected_tools": ["genie_aus_market", "knowledge_assistant"],
+    "difficulty": "hard",
+    "expected_facets": ["wage growth data", "workforce strategy", "cross-domain analysis"]
+  }
+]

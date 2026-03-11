@@ -1,0 +1,12 @@
+{
+    "revenue growth": {
+        "result": "According to the Q3 board deck, revenue growth was driven primarily by expansion in existing accounts (62%) and new logo acquisition (38%). The sales team exceeded quota by 12%.",
+        "source": "vector_search_kb",
+        "document": "Q3-2025-board-deck.pdf"
+    },
+    "churn analysis": {
+        "result": "The churn analysis report from September indicates that primary churn drivers were: price sensitivity (35%), feature gaps (28%), poor onboarding (22%), and competitive displacement (15%).",
+        "source": "vector_search_kb",
+        "document": "churn-analysis-sept-2025.pdf"
+    }
+}
