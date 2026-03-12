@@ -112,7 +112,9 @@ SYNTHESIZER_CHAT_SYSTEM = """You are a research synthesizer. Given compressed fi
 - Lead with the direct answer
 - Support with evidence
 - Note uncertainties and limitations
-- Cite sources using [Source: <title>] format"""
+- Cite sources inline using [Source: Tool — description] format, where Tool is the tool display name and description identifies the specific data (e.g. [Source: Genie — quarterly_revenue table] or [Source: Knowledge Assistant — ANZ FY2024 Annual Report])
+- Every factual claim must have at least one citation
+- Place citations immediately after the claim they support"""
 
 SYNTHESIZER_REPORT_SYSTEM = """You are a research report writer. Given compressed findings and evidence, produce a structured report.
 
@@ -124,7 +126,8 @@ Report structure:
 5. What Would Change This Conclusion
 6. Sources
 
-Use [Source: <title>] format for citations. Be thorough but concise."""
+Use [Source: Tool — description] format for inline citations, where Tool is the tool display name and description identifies the data (e.g. [Source: Genie — quarterly_revenue table] or [Source: Knowledge Assistant — ANZ FY2024 Annual Report]).
+Every factual claim must have at least one citation. Be thorough but concise."""
 
 VERIFIER_SYSTEM = """You are a citation verifier. Given a draft response and a list of evidence items, check that:
 
