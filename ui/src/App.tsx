@@ -4,7 +4,7 @@ import { ToolSelector } from "./components/ToolSelector";
 import { ReportPanel } from "./components/ReportPanel";
 import { useResearch } from "./hooks/useResearch";
 import type { OutputMode, ResponseMode } from "./types";
-import "./App.css";
+
 
 function App() {
   const { messages, currentJob, isLoading, error, send, cancel, rate } =
