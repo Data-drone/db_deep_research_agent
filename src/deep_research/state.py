@@ -27,6 +27,9 @@ class ResearchState(TypedDict, total=False):
 
     # Clarification
     clarified_query: str | None
+    needs_clarification: bool
+    clarification_question: str
+    clarification_options: list[str]
 
     # Planning
     research_plan: list[SubQuestion]
@@ -86,6 +89,9 @@ def create_initial_state(
         selected_tools=selected_tools,
         output_mode=output_mode,
         clarified_query=None,
+        needs_clarification=False,
+        clarification_question="",
+        clarification_options=[],
         research_plan=[],
         tool_assignments={},
         budget=budget or Budget(),

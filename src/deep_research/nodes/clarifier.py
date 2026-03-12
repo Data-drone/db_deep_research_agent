@@ -13,14 +13,22 @@ logger = logging.getLogger(__name__)
 
 
 async def clarifier_node(state: ResearchState, *, model: Any) -> dict:
-    """Refine and focus the user query. Always produces a clarified version.
+    """Refine and focus the user query. May request clarification for ambiguous queries.
 
-    When conversation history is present (follow-up query), includes prior
-    turns so the model can resolve references like "Tell me more about X".
+    When called with clarified_query already set (pre-graph clarification resolved it),
+    short-circuits and returns the existing value.
+
+    Returns either:
+    - {"clarified_query": "..."} for clear queries or pre-resolved
+    - {"clarified_query": best_guess, "needs_clarification": True,
+       "clarification_question": "...", "clarification_options": [...]}
     """
+    # Short-circuit if pre-graph clarification already resolved this
+    if state.get("clarified_query"):
+        return {"clarified_query": state["clarified_query"]}
+
     messages: list[dict[str, str]] = [{"role": "system", "content": CLARIFIER_SYSTEM}]
 
-    # Include recent prior turns for context (filtered to user/assistant only, capped)
     _MAX_HISTORY_TURNS = 10
     for msg in state.get("conversation_history", [])[-_MAX_HISTORY_TURNS:]:
         role = msg.get("role")
@@ -32,9 +40,26 @@ async def clarifier_node(state: ResearchState, *, model: Any) -> dict:
 
     response = await model.ainvoke(messages)
 
+    content = getattr(response, "content", "")
+    if not isinstance(content, str):
+        content = str(content)
+
     try:
-        result = json.loads(response.content)
+        result = json.loads(content)
     except (json.JSONDecodeError, AttributeError):
         return {"clarified_query": state["user_query"]}
+
+    if result.get("needs_clarification"):
+        options = result.get("options")
+        if not isinstance(options, list):
+            options = []
+        options = [str(o) for o in options[:3]]
+
+        return {
+            "clarified_query": result.get("best_guess", state["user_query"]),
+            "needs_clarification": True,
+            "clarification_question": str(result.get("question", "Could you clarify your question?")),
+            "clarification_options": options,
+        }
 
     return {"clarified_query": result.get("clarified_query", state["user_query"])}

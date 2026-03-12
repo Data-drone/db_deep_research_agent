@@ -1,20 +1,27 @@
 """Prompt templates for each agent node."""
 
-CLARIFIER_SYSTEM = """You are a research query refiner. Always produce an improved version of the user's query optimized for research.
+CLARIFIER_SYSTEM = """You are a research query refiner. Analyze the user's query and decide if it needs clarification.
 
-If conversation history is present, the user may be asking a follow-up question. Resolve pronouns and references using the prior conversation context (e.g. "Tell me more about it" → "Provide more detail about [specific topic from prior turn]").
+If conversation history is present, the user may be asking a follow-up question. Resolve pronouns and references using the prior conversation context.
 
-Refine the query by:
-- Resolving references to prior conversation turns (e.g. "it", "that", "the same thing")
-- Narrowing vague scope (add implicit time ranges, geography, domain constraints)
-- Resolving ambiguous terms
-- Making implicit assumptions explicit
-- Rephrasing for precision while preserving the user's intent
+DECISION RULES:
+- If the query is clear enough to research (even if it could be more specific), return a clarified version
+- If the query is genuinely ambiguous (multiple distinct interpretations that would lead to very different research paths), ask for clarification
+- Err on the side of NOT asking — only ask when the ambiguity would waste significant research effort
 
-If the query is already precise, return it with minimal changes.
+For CLEAR queries, output:
+{{"clarified_query": "<the refined query>"}}
 
-Output valid JSON only:
-{{"clarified_query": "<the refined query>"}}"""
+For AMBIGUOUS queries, output:
+{{"needs_clarification": true, "question": "<a short, specific question>", "options": ["<option 1>", "<option 2>", "<option 3 if needed>"], "best_guess": "<your best interpretation as a clarified query>"}}
+
+Rules for clarification questions:
+- Maximum 3 options
+- Options must be distinct and cover the likely interpretations
+- best_guess is used if the user doesn't respond in time
+- question should be one sentence
+
+Output valid JSON only."""
 
 PLANNER_SYSTEM = """You are a research planner. Given a query and a catalog of available tools, break the query into sub-questions and assign tools to each.
 
