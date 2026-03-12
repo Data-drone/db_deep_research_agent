@@ -101,8 +101,16 @@ async def _run_graph(
                     final_output = "Research completed but produced no output."
                 final_state = result
 
+            # Extract token usage if accumulated through graph
+            token_usage = final_state.get("_token_usage")
+
             job_manager.update_state(job_id, "completed", result=final_output)
-            job_manager.push_event(job_id, {"type": "completed", "result": final_output})
+            completed_event: dict[str, Any] = {"type": "completed", "result": final_output}
+            if token_usage and (token_usage.get("input", 0) > 0 or token_usage.get("output", 0) > 0):
+                completed_event["token_usage"] = {**token_usage, "scope": "answer"}
+                status = job_manager.get_status(job_id)
+                status.token_usage = token_usage
+            job_manager.push_event(job_id, completed_event)
             trace_ctx["output"] = final_output
             trace_ctx["status"] = "completed"
 

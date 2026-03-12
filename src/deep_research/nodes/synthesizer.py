@@ -76,8 +76,16 @@ async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
                 chunks.append(token)
                 job_manager.push_event(job_id, {"type": "token", "content": token})
         final_output = "".join(chunks)
+        token_usage = state.get("_token_usage", {"input": 0, "output": 0})
     else:
         response = await model.ainvoke(messages)
         final_output = response.content
+        meta = getattr(response, "response_metadata", {}) or {}
+        usage = meta.get("usage", {})
+        prior = state.get("_token_usage", {"input": 0, "output": 0})
+        token_usage = {
+            "input": prior["input"] + int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
+            "output": prior["output"] + int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
+        }
 
-    return {"final_output": final_output}
+    return {"final_output": final_output, "_token_usage": token_usage}

@@ -71,6 +71,7 @@ class ResearchState(TypedDict, total=False):
     # Runtime-only (injected by _run_graph for token streaming, not persisted)
     _job_manager: Any
     _job_id: str
+    _token_usage: dict[str, int]
 
 
 def create_initial_state(
@@ -115,4 +116,5 @@ def create_initial_state(
         conversation_history=conversation_history or [],
         prior_evidence=prior_evidence or [],
         cancelled=False,
+        _token_usage={"input": 0, "output": 0},
     )
