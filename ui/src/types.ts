@@ -41,3 +41,10 @@ export interface JobStatus {
 export type OutputMode = "chat" | "report";
 
 export type ResponseMode = "quick" | "research";
+
+export interface ClarificationRequest {
+  jobId: string;
+  clarificationId: string;
+  question: string;
+  options: string[];
+}

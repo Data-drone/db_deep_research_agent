@@ -46,6 +46,18 @@ export async function submitFeedback(
   });
 }
 
+export async function submitClarification(
+  jobId: string,
+  clarificationId: string,
+  answer: string
+): Promise<{ status: string; used_answer?: boolean; job_id?: string }> {
+  const res = await client.post(`/api/research/${jobId}/clarify`, {
+    clarification_id: clarificationId,
+    answer,
+  });
+  return res.data;
+}
+
 export function streamJob(
   jobId: string,
   onEvent: (event: {
@@ -58,6 +70,12 @@ export function streamJob(
     rows?: string[][];
     sql?: string;
     chart?: { type: string; x: string; y: string[]; title?: string };
+    clarification_id?: string;
+    question?: string;
+    options?: string[];
+    best_guess?: string;
+    answer?: string;
+    token_usage?: { input: number; output: number; scope: string };
   }) => void,
   onError: (err: Error) => void
 ): () => void {
