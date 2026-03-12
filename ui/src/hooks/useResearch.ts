@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { submitResearch, streamJob, cancelJob, submitFeedback } from "../api";
-import type { Message, JobStatus, OutputMode, ResponseMode } from "../types";
+import type { Message, JobStatus, OutputMode, ResponseMode, TableData } from "../types";
 
 export function useResearch() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -12,6 +12,7 @@ export function useResearch() {
   const cleanupRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
   const sessionIdRef = useRef<string | null>(null);
+  const pendingTableDataRef = useRef<TableData | null>(null);
 
   useEffect(() => {
     return () => {
@@ -65,24 +66,32 @@ export function useResearch() {
                 ];
               }
             });
+          } else if (event.type === "table_data") {
+            pendingTableDataRef.current = {
+              columns: event.columns || [],
+              rows: event.rows || [],
+              sql: event.sql,
+              chart: event.chart as TableData["chart"],
+            };
           } else if (event.type === "completed") {
+            const pendingTableData = pendingTableDataRef.current;
+            pendingTableDataRef.current = null;
             stopStream();
             setIsLoading(false);
             setCurrentJob(null);
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg?.streaming && lastMsg.jobId === jobId) {
-                // Finalize streaming message with full result
                 return [
                   ...prev.slice(0, -1),
                   {
                     ...lastMsg,
                     content: event.result || lastMsg.content,
                     streaming: false,
+                    tableData: pendingTableData ?? undefined,
                   },
                 ];
               } else if (event.result) {
-                // No streaming happened — create message from full result
                 return [
                   ...prev,
                   {
@@ -91,6 +100,7 @@ export function useResearch() {
                     content: event.result,
                     timestamp: new Date().toISOString(),
                     jobId,
+                    tableData: pendingTableData ?? undefined,
                   },
                 ];
               }

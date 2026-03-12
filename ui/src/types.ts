@@ -4,6 +4,20 @@ export interface Tool {
   risk_tier: "safe" | "restricted" | "privileged";
 }
 
+export interface ChartConfig {
+  type: "line" | "bar" | "none";
+  x: string;
+  y: string[];
+  title?: string;
+}
+
+export interface TableData {
+  columns: { name: string; type: string }[];
+  rows: string[][];
+  sql?: string;
+  chart?: ChartConfig;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -12,6 +26,7 @@ export interface Message {
   jobId?: string;
   rating?: "thumbs_up" | "thumbs_down";
   streaming?: boolean; // true while tokens are still arriving
+  tableData?: TableData;
 }
 
 export interface JobStatus {

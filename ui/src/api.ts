@@ -48,7 +48,17 @@ export async function submitFeedback(
 
 export function streamJob(
   jobId: string,
-  onEvent: (event: { type: string; node?: string; result?: string; error?: string; content?: string }) => void,
+  onEvent: (event: {
+    type: string;
+    node?: string;
+    result?: string;
+    error?: string;
+    content?: string;
+    columns?: { name: string; type: string }[];
+    rows?: string[][];
+    sql?: string;
+    chart?: { type: string; x: string; y: string[]; title?: string };
+  }) => void,
   onError: (err: Error) => void
 ): () => void {
   let cancelled = false;
