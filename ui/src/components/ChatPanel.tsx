@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { ProgressBar } from "./ProgressBar";
 import { TypingIndicator } from "./TypingIndicator";
-import type { Message, JobStatus, OutputMode, ResponseMode } from "../types";
+import { ClarificationPrompt } from "./ClarificationPrompt";
+import type { Message, JobStatus, OutputMode, ResponseMode, ClarificationRequest } from "../types";
 
 interface Props {
   messages: Message[];
@@ -14,6 +15,9 @@ interface Props {
   onSend: (query: string, tools: string[], mode: OutputMode, responseMode: ResponseMode) => void;
   onCancel: () => void;
   onRate: (id: string, rating: "thumbs_up" | "thumbs_down") => void;
+  clarificationRequest: ClarificationRequest | null;
+  clarificationSubmitting: boolean;
+  onAnswerClarification: (answer: string) => void;
 }
 
 const sampleQuestions = [
@@ -33,6 +37,9 @@ export function ChatPanel({
   onSend,
   onCancel,
   onRate,
+  clarificationRequest,
+  clarificationSubmitting,
+  onAnswerClarification,
 }: Props) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -100,6 +107,13 @@ export function ChatPanel({
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} onRate={onRate} />
           ))}
+          {clarificationRequest && (
+            <ClarificationPrompt
+              request={clarificationRequest}
+              onAnswer={onAnswerClarification}
+              submitting={clarificationSubmitting}
+            />
+          )}
           {showTypingIndicator && <TypingIndicator />}
           {currentJob && <ProgressBar job={currentJob} onCancel={onCancel} />}
           <div ref={messagesEndRef} />

@@ -7,7 +7,7 @@ import { useResearch } from "./hooks/useResearch";
 import type { OutputMode, ResponseMode } from "./types";
 
 function App() {
-  const { messages, currentJob, isLoading, error, send, cancel, rate } =
+  const { messages, currentJob, isLoading, error, clarificationRequest, clarificationSubmitting, send, cancel, answerClarification, rate } =
     useResearch();
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [outputMode, setOutputMode] = useState<OutputMode>("chat");
@@ -117,6 +117,9 @@ function App() {
               onSend={send}
               onCancel={cancel}
               onRate={rate}
+              clarificationRequest={clarificationRequest}
+              clarificationSubmitting={clarificationSubmitting}
+              onAnswerClarification={answerClarification}
             />
           )}
         </main>

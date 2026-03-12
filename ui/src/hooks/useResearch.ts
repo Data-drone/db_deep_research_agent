@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { submitResearch, streamJob, cancelJob, submitFeedback } from "../api";
-import type { Message, JobStatus, OutputMode, ResponseMode, TableData } from "../types";
+import { submitResearch, streamJob, cancelJob, submitFeedback, submitClarification } from "../api";
+import type { Message, JobStatus, OutputMode, ResponseMode, TableData, ClarificationRequest } from "../types";
 
 export function useResearch() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentJob, setCurrentJob] = useState<JobStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [clarificationRequest, setClarificationRequest] = useState<ClarificationRequest | null>(null);
+  const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
 
   const activeJobIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -38,6 +40,7 @@ export function useResearch() {
           if (!mountedRef.current || activeJobIdRef.current !== jobId) return;
 
           if (event.type === "node_started" && event.node) {
+            setClarificationRequest(null); // Defensive: clear stale prompts on graph progress
             setCurrentJob((prev) =>
               prev ? { ...prev, status: "running", current_node: event.node } : prev
             );
@@ -46,13 +49,11 @@ export function useResearch() {
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg?.streaming && lastMsg.jobId === jobId) {
-                // Append to existing streaming message
                 return [
                   ...prev.slice(0, -1),
                   { ...lastMsg, content: lastMsg.content + tokenText },
                 ];
               } else {
-                // Create new streaming message
                 return [
                   ...prev,
                   {
@@ -73,12 +74,40 @@ export function useResearch() {
               sql: event.sql,
               chart: event.chart as TableData["chart"],
             };
+          } else if (event.type === "clarification_needed") {
+            setClarificationRequest({
+              jobId,
+              clarificationId: event.clarification_id || "",
+              question: event.question || "Could you clarify your question?",
+              options: event.options || [],
+            });
+          } else if (event.type === "clarification_resolved" || event.type === "clarification_timeout") {
+            setClarificationRequest(null);
+            setClarificationSubmitting(false);
+            if (event.type === "clarification_timeout" && event.best_guess) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant" as const,
+                  content: `No response received — proceeding with: "${event.best_guess}"`,
+                  timestamp: new Date().toISOString(),
+                  jobId,
+                },
+              ]);
+            }
           } else if (event.type === "completed") {
             const pendingTableData = pendingTableDataRef.current;
             pendingTableDataRef.current = null;
+            const rawScope = event.token_usage?.scope;
+            const tokenUsage = event.token_usage
+              ? { input: event.token_usage.input, output: event.token_usage.output, scope: (rawScope === "answer" ? "answer" : "job") as "answer" | "job" }
+              : undefined;
             stopStream();
             setIsLoading(false);
             setCurrentJob(null);
+            setClarificationRequest(null);
+            setClarificationSubmitting(false);
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg?.streaming && lastMsg.jobId === jobId) {
@@ -89,6 +118,7 @@ export function useResearch() {
                     content: event.result || lastMsg.content,
                     streaming: false,
                     tableData: pendingTableData ?? undefined,
+                    tokenUsage,
                   },
                 ];
               } else if (event.result) {
@@ -101,6 +131,7 @@ export function useResearch() {
                     timestamp: new Date().toISOString(),
                     jobId,
                     tableData: pendingTableData ?? undefined,
+                    tokenUsage,
                   },
                 ];
               }
@@ -110,6 +141,8 @@ export function useResearch() {
             stopStream();
             setIsLoading(false);
             setCurrentJob(null);
+            setClarificationRequest(null);
+            setClarificationSubmitting(false);
             setMessages((prev) => [
               ...prev,
               {
@@ -141,6 +174,7 @@ export function useResearch() {
       if (isLoading) return;
 
       setError(null);
+      pendingTableDataRef.current = null;
 
       const userMsg: Message = {
         id: crypto.randomUUID(),
@@ -189,6 +223,8 @@ export function useResearch() {
     stopStream();
     setIsLoading(false);
     setCurrentJob(null);
+    setClarificationRequest(null);
+    setClarificationSubmitting(false);
 
     try {
       await cancelJob(jobId);
@@ -196,6 +232,46 @@ export function useResearch() {
       // Best-effort cancellation
     }
   }, [stopStream]);
+
+  const answerClarification = useCallback(async (answer: string) => {
+    const req = clarificationRequest;
+    if (!req || clarificationSubmitting) return;
+
+    setClarificationSubmitting(true);
+
+    try {
+      const result = await submitClarification(req.jobId, req.clarificationId, answer);
+
+      if (result.status === "accepted") {
+        setClarificationRequest(null);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "user",
+            content: answer,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      } else {
+        // expired / already_answered / cancelled — clear prompt, show info
+        setClarificationRequest(null);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant" as const,
+            content: "Clarification was not used — the research has already proceeded.",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } catch {
+      setError("Failed to submit clarification.");
+    } finally {
+      setClarificationSubmitting(false);
+    }
+  }, [clarificationRequest, clarificationSubmitting]);
 
   const rate = useCallback(
     async (messageId: string, rating: "thumbs_up" | "thumbs_down") => {
@@ -222,5 +298,5 @@ export function useResearch() {
     []
   );
 
-  return { messages, currentJob, isLoading, error, send, cancel, rate };
+  return { messages, currentJob, isLoading, error, clarificationRequest, clarificationSubmitting, send, cancel, answerClarification, rate };
 }
