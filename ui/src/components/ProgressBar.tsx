@@ -13,15 +13,8 @@ const NODE_LABELS: Record<string, string> = {
 };
 
 const NODE_ORDER = [
-  "clarifier",
-  "planner",
-  "authorizer",
-  "researcher",
-  "normalizer",
-  "evaluator",
-  "compressor",
-  "synthesizer",
-  "verifier",
+  "clarifier", "planner", "authorizer", "researcher",
+  "normalizer", "evaluator", "compressor", "synthesizer", "verifier",
 ];
 
 interface Props {
@@ -43,39 +36,17 @@ export function ProgressBar({ job, onCancel }: Props) {
     currentIdx >= 0 ? ((currentIdx + 1) / NODE_ORDER.length) * 100 : 10;
 
   return (
-    <div className="progress-bar-container" aria-busy="true">
-      <div className="progress-header">
-        <span className="progress-label" role="status" aria-live="polite">
-          {label}
-        </span>
-        <button
-          className="cancel-btn"
-          onClick={onCancel}
-          aria-label="Cancel research"
-          title="Cancel"
-        >
-          ✕
-        </button>
+    <div className="my-3 p-3 bg-warm-card shadow-sm rounded-xl animate-fade-in" aria-busy="true">
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-sm text-warm-text font-medium" role="status" aria-live="polite">{label}</span>
+        <button className="text-warm-text-secondary hover:text-warm-rose transition-colors duration-150 text-sm px-1" onClick={onCancel} aria-label="Cancel research" title="Cancel">✕</button>
       </div>
-      <div
-        className="progress-track"
-        role="progressbar"
-        aria-valuenow={Math.round(progress)}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`Research progress: ${label}`}
-      >
-        <div className="progress-fill" style={{ width: `${progress}%` }} />
+      <div className="h-1 bg-warm-border rounded-full overflow-hidden" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label={`Research progress: ${label}`}>
+        <div className="h-full bg-warm-accent rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
       </div>
-      <div className="progress-steps" aria-hidden="true">
+      <div className="flex justify-between mt-1.5" aria-hidden="true">
         {NODE_ORDER.map((node, idx) => (
-          <span
-            key={node}
-            className={`step ${idx < currentIdx ? "done" : idx === currentIdx ? "active" : ""}`}
-            title={NODE_LABELS[node]}
-          >
-            •
-          </span>
+          <span key={node} className={`text-[10px] transition-colors duration-150 ${idx < currentIdx ? "text-warm-accent" : idx === currentIdx ? "text-warm-text" : "text-warm-border"}`} title={NODE_LABELS[node]}>•</span>
         ))}
       </div>
     </div>
