@@ -56,9 +56,11 @@ async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
             context_parts.append(f"Contradictions: {', '.join(findings.contradictions)}")
 
     if evidence:
-        context_parts.append("Evidence:")
+        context_parts.append("Evidence (cite using [Source: Tool — description] format):")
         for e in evidence:
-            context_parts.append(f"- [{e.source_id}] {e.snippet}")
+            tool_label = (e.tool_that_produced_it or "Unknown").replace("]", ")")
+            title_label = (e.title or e.source_id).replace("]", ")")
+            context_parts.append(f"- [Source: {tool_label} — {title_label}] {e.snippet}")
 
     messages = [
         {"role": "system", "content": system_prompt},
