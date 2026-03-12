@@ -40,6 +40,7 @@ def app_with_graph():
     """App with a mock graph that returns final_output."""
     a = create_app()
     a.state.graph = _MockGraph()
+    a.state.model = _MockModel()
     a.state.mcp_manager = None
     a.state.config = None
     return a
@@ -462,3 +463,49 @@ async def test_quick_reply_session_continuity(quick_client):
 
     status = await quick_client.get(f"/api/research/{r2.json()['job_id']}")
     assert status.json()["status"] == "completed"
+
+
+# ── Clarification endpoint tests ──
+
+
+async def test_clarify_unknown_job(client):
+    """Clarify endpoint returns 404 for unknown job."""
+    response = await client.post(
+        "/api/research/nonexistent/clarify",
+        json={"clarification_id": "clr-123", "answer": "test"},
+    )
+    assert response.status_code == 404
+
+
+async def test_clarify_no_pending(quick_client):
+    """Clarify returns 400 if job has no pending clarification."""
+    res = await quick_client.post("/api/research", json={
+        "query": "test", "tools": [], "response_mode": "quick"
+    })
+    job_id = res.json()["job_id"]
+    await asyncio.sleep(0.1)
+
+    response = await quick_client.post(
+        f"/api/research/{job_id}/clarify",
+        json={"clarification_id": "clr-123", "answer": "option A"},
+    )
+    assert response.status_code == 400
+
+
+async def test_clarify_blank_answer_rejected(client):
+    """Clarify endpoint rejects blank answers."""
+    response = await client.post(
+        "/api/research/nonexistent/clarify",
+        json={"clarification_id": "clr-123", "answer": "   "},
+    )
+    assert response.status_code == 422
+
+
+async def test_job_status_no_clarification(quick_client):
+    """Job status without clarification has no pending_clarification field."""
+    res = await quick_client.post("/api/research", json={
+        "query": "test", "tools": [], "response_mode": "quick"
+    })
+    await asyncio.sleep(0.2)
+    status = await quick_client.get(f"/api/research/{res.json()['job_id']}")
+    assert "pending_clarification" not in status.json()

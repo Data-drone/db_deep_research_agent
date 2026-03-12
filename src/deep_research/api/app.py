@@ -10,9 +10,10 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.responses import StreamingResponse
 
+from deep_research.api.clarification import InMemoryClarificationStore
 from deep_research.api.jobs import JobManager, JobStatus
 from deep_research.session import SessionManager
 from deep_research.state import create_initial_state
@@ -32,6 +33,19 @@ class FeedbackRequest(BaseModel):
     query_id: str
     rating: Literal["thumbs_up", "thumbs_down"]
     comment: str = ""
+
+
+class ClarifyRequest(BaseModel):
+    clarification_id: str = Field(..., min_length=1)
+    answer: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("answer")
+    @classmethod
+    def strip_answer(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Answer must not be blank")
+        return v
 
 
 async def _run_graph(
@@ -181,10 +195,14 @@ async def _run_quick_reply(
                 {"role": "user", "content": query},
             ])
             reply = response.content if hasattr(response, "content") else str(response)
+            token_usage = _extract_token_usage(response)
 
             # 5. Complete job
             job_manager.update_state(job_id, "completed", result=reply)
-            job_manager.push_event(job_id, {"type": "completed", "result": reply})
+            completed_event: dict[str, Any] = {"type": "completed", "result": reply}
+            if token_usage and (token_usage["input"] > 0 or token_usage["output"] > 0):
+                completed_event["token_usage"] = {**token_usage, "scope": "answer"}
+            job_manager.push_event(job_id, completed_event)
             trace_ctx["output"] = reply
             trace_ctx["status"] = "completed"
 
@@ -201,6 +219,105 @@ async def _run_quick_reply(
             trace_ctx["output"] = str(exc)
 
 
+def _extract_token_usage(response: Any) -> dict[str, int]:
+    """Extract token usage from an LLM response's metadata."""
+    meta = getattr(response, "response_metadata", {}) or {}
+    usage = (
+        meta.get("usage")
+        or meta.get("token_usage")
+        or getattr(response, "usage_metadata", None)
+        or {}
+    )
+    return {
+        "input": int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
+        "output": int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
+    }
+
+
+async def _run_research_with_clarification(
+    model: Any,
+    graph: Any,
+    clarification_store: InMemoryClarificationStore,
+    job_manager: JobManager,
+    job_id: str,
+    initial_state: dict,
+    session_manager: SessionManager,
+    session_id: str,
+) -> None:
+    """Run clarifier pre-graph, handle clarification if needed, then run full graph."""
+    from deep_research.nodes.clarifier import clarifier_node
+
+    try:
+        job_manager.update_state(job_id, "running", current_node="clarifier")
+        job_manager.push_event(job_id, {"type": "node_started", "node": "clarifier"})
+
+        # Run clarifier standalone (pre-graph)
+        clarifier_result = await clarifier_node(initial_state, model=model)
+
+        if clarifier_result.get("needs_clarification"):
+            question = clarifier_result.get("clarification_question", "")
+            options = clarifier_result.get("clarification_options", [])
+            best_guess = clarifier_result.get("clarified_query", initial_state["user_query"])
+
+            # Create persisted clarification state BEFORE emitting SSE
+            clr_state = clarification_store.create(job_id, question, options, best_guess)
+
+            # Push event to UI with clarification_id
+            job_manager.push_event(job_id, {
+                "type": "clarification_needed",
+                "clarification_id": clr_state.clarification_id,
+                "question": question,
+                "options": options,
+            })
+
+            # Wait for user answer using the store's wait method
+            result_state = await clarification_store.wait_for_resolution(job_id, timeout=30.0)
+
+            if result_state and result_state.status == "answered" and result_state.answer:
+                initial_state["clarified_query"] = result_state.answer
+                job_manager.push_event(job_id, {
+                    "type": "clarification_resolved",
+                    "answer": result_state.answer,
+                })
+            elif result_state and result_state.status == "cancelled":
+                # Job was cancelled while waiting for clarification
+                clarification_store.cleanup(job_id)
+                return  # cancel_research already updated job state
+            elif result_state and result_state.status == "timed_out":
+                initial_state["clarified_query"] = best_guess
+                job_manager.push_event(job_id, {
+                    "type": "clarification_timeout",
+                    "best_guess": best_guess,
+                })
+            else:
+                initial_state["clarified_query"] = best_guess
+        else:
+            initial_state["clarified_query"] = clarifier_result.get(
+                "clarified_query", initial_state["user_query"]
+            )
+
+        # Ensure graph's clarifier short-circuits
+        initial_state["needs_clarification"] = False
+
+        # Run the full graph
+        await _run_graph(
+            graph, job_manager, job_id, initial_state,
+            session_manager=session_manager,
+            session_id=session_id,
+        )
+
+        # Cleanup clarification state after job completion
+        clarification_store.cleanup(job_id)
+
+    except Exception as exc:
+        logger.exception(f"Research with clarification failed for job {job_id}")
+        job_manager.update_state(
+            job_id, "failed", error=f"Research execution failed: {exc}"
+        )
+        job_manager.push_event(job_id, {"type": "failed", "error": f"Research execution failed: {exc}"})
+        clarification_store.cleanup(job_id)
+
+
 def create_app(use_mocks: bool = False) -> FastAPI:
     app = FastAPI(title="Deep Research Agent", version="0.1.0")
 
@@ -213,6 +330,7 @@ def create_app(use_mocks: bool = False) -> FastAPI:
 
     job_manager = JobManager()
     session_manager = SessionManager()
+    clarification_store = InMemoryClarificationStore()
 
     @app.get("/health")
     async def health():
@@ -306,8 +424,13 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             )
 
             asyncio.create_task(
-                _run_graph(
-                    graph, job_manager, job_id, initial_state,
+                _run_research_with_clarification(
+                    model=getattr(request.app.state, "model", None),
+                    graph=graph,
+                    clarification_store=clarification_store,
+                    job_manager=job_manager,
+                    job_id=job_id,
+                    initial_state=initial_state,
                     session_manager=session_manager,
                     session_id=session.session_id,
                 )
@@ -326,13 +449,21 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             status = job_manager.get_status(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Job not found")
-        return {
+        response = {
             "job_id": job_id,
             "status": status.state,
             "result": status.result,
             "current_node": status.current_node,
             "error": status.error,
         }
+        clr_state = clarification_store.get(job_id)
+        if clr_state and clr_state.status == "pending":
+            response["pending_clarification"] = {
+                "clarification_id": clr_state.clarification_id,
+                "question": clr_state.question,
+                "options": clr_state.options,
+            }
+        return response
 
     @app.get("/api/research/{job_id}/stream")
     async def stream_research(job_id: str):
@@ -379,7 +510,36 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             job_manager.cancel_job(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Job not found")
+        # Wake any waiting clarification
+        clarification_store.mark_cancelled(job_id)
         return {"job_id": job_id, "status": "cancelled"}
+
+    @app.post("/api/research/{job_id}/clarify")
+    async def submit_clarification(job_id: str, req: ClarifyRequest):
+        try:
+            job_manager.get_status(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        clr_state = clarification_store.get(job_id)
+        if clr_state is None:
+            raise HTTPException(status_code=400, detail="No pending clarification for this job")
+
+        if clr_state.clarification_id != req.clarification_id:
+            raise HTTPException(status_code=409, detail="Clarification ID mismatch")
+
+        if clr_state.status == "answered":
+            return {"status": "already_answered", "used_answer": False}
+        if clr_state.status == "timed_out":
+            return {"status": "expired", "used_answer": False}
+        if clr_state.status == "cancelled":
+            return {"status": "cancelled", "used_answer": False}
+
+        result = clarification_store.submit_answer(job_id, req.clarification_id, req.answer)
+        if result is None:
+            return {"status": "expired", "used_answer": False}
+
+        return {"status": "accepted", "job_id": job_id}
 
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):

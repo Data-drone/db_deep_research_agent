@@ -24,6 +24,7 @@ class JobStatus:
     current_node: str | None = None
     result: str | None = None
     error: str | None = None
+    token_usage: dict[str, int] | None = None
 
 
 class JobManager:
