@@ -9,8 +9,15 @@ interface Props {
   onRate: (id: string, rating: "thumbs_up" | "thumbs_down") => void;
 }
 
+const CITATION_RE = /\[Source:\s*([^\]]+)\]/g;
+
 export function MessageBubble({ message, onRate }: Props) {
   const isUser = message.role === "user";
+
+  // Convert [Source: X] markers to bold inline-code for badge styling
+  const displayContent = !isUser
+    ? message.content.replace(CITATION_RE, "**`📎 $1`**")
+    : message.content;
 
   return (
     <div
@@ -35,12 +42,12 @@ export function MessageBubble({ message, onRate }: Props) {
             <p className="leading-relaxed text-[15px]">{message.content}</p>
           ) : (
             <>
-              <div className="leading-relaxed text-[15px] prose prose-sm max-w-none prose-headings:text-warm-text prose-p:text-warm-text prose-strong:text-warm-text prose-a:text-warm-accent">
+              <div className="leading-relaxed text-[15px] prose prose-sm max-w-none prose-headings:text-warm-text prose-p:text-warm-text prose-strong:text-warm-text prose-a:text-warm-accent prose-code:bg-warm-sage/10 prose-code:text-warm-sage prose-code:text-xs prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:font-medium prose-code:before:content-none prose-code:after:content-none">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeSanitize]}
                 >
-                  {message.content}
+                  {displayContent}
                 </ReactMarkdown>
                 {message.streaming && (
                   <span className="streaming-cursor" aria-hidden="true">
@@ -53,7 +60,7 @@ export function MessageBubble({ message, onRate }: Props) {
           )}
         </div>
         {!isUser && !message.streaming && (
-          <div className="mt-1.5 flex gap-1">
+          <div className="mt-1.5 flex items-center gap-1">
             <button
               className={`px-2 py-0.5 rounded-md text-sm transition-colors duration-150 ${
                 message.rating === "thumbs_up"
@@ -78,6 +85,11 @@ export function MessageBubble({ message, onRate }: Props) {
             >
               👎
             </button>
+            {message.tokenUsage && (
+              <span className="ml-auto text-[11px] text-warm-text-secondary tabular-nums" title={message.tokenUsage.scope === "job" ? "Total tokens for full research run" : "Tokens for this answer"}>
+                {(message.tokenUsage.input + message.tokenUsage.output).toLocaleString()} tokens
+              </span>
+            )}
           </div>
         )}
       </div>

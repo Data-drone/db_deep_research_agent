@@ -27,6 +27,7 @@ export interface Message {
   rating?: "thumbs_up" | "thumbs_down";
   streaming?: boolean; // true while tokens are still arriving
   tableData?: TableData;
+  tokenUsage?: { input: number; output: number; scope: "answer" | "job" };
 }
 
 export interface JobStatus {
