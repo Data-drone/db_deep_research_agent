@@ -18,6 +18,7 @@ from starlette.responses import StreamingResponse
 from deep_research.api.clarification import InMemoryClarificationStore
 from deep_research.api.jobs import JobManager, JobStatus
 from deep_research.session import SessionManager
+from deep_research_pydantic.nodes import to_message_history
 from deep_research_pydantic.schemas import ClarifierOutput
 from deep_research_pydantic.state import create_initial_state
 
@@ -369,6 +370,9 @@ async def _run_research_with_clarification(
                 raise RuntimeError("Clarifier model not initialized")
             clarifier_response = await model.run(
                 initial_state["user_query"],
+                message_history=to_message_history(
+                    initial_state.get("conversation_history", [])
+                ),
             )
             clarifier_output: ClarifierOutput = clarifier_response.output
         except _STRUCTURED_OUTPUT_ERRORS:

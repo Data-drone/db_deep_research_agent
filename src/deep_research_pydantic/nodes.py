@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -106,6 +107,28 @@ class NodeDeps:
     mcp_manager: MCPClientManager | None
     job_manager: Any | None = None
     job_id: str = ""
+
+
+def to_message_history(
+    conversation_history: list[dict[str, Any]],
+    limit: int = _MAX_HISTORY_TURNS,
+) -> list[ModelMessage]:
+    """Convert API conversation entries into Pydantic AI model messages."""
+
+    history: list[ModelMessage] = []
+    messages = conversation_history[-limit:] if limit > 0 else []
+
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        if role == "user":
+            history.append(ModelRequest(parts=[UserPromptPart(content)]))
+        elif role == "assistant":
+            history.append(ModelResponse(parts=[TextPart(content)]))
+
+    return history
 
 
 def _normalize_question(question: str) -> str:
@@ -249,20 +272,10 @@ async def clarifier(
     if state.get("clarified_query"):
         return {"clarified_query": state["clarified_query"]}
 
-    history: list[ModelRequest | ModelResponse] = []
-    for message in state.get("conversation_history", [])[-_MAX_HISTORY_TURNS:]:
-        role = message.get("role")
-        content = message.get("content")
-        if not isinstance(content, str):
-            continue
-        if role == "user":
-            history.append(
-                ModelRequest(parts=[UserPromptPart(content)])
-            )
-        elif role == "assistant":
-            history.append(
-                ModelResponse(parts=[TextPart(content)])
-            )
+    history = to_message_history(
+        state.get("conversation_history", []),
+        limit=_MAX_HISTORY_TURNS,
+    )
 
     try:
         result = await deps.agents.clarifier.run(
@@ -931,7 +944,7 @@ async def evaluator(
     }
     for sub_question in plan:
         verdict = verdicts.get(sub_question.subquestion_id)
-        if verdict is None:
+        if verdict is None or verdict.verdict is None:
             continue
 
         if verdict.verdict == "unanswered":

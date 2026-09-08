@@ -16,6 +16,18 @@ class ClarifierOutput(BaseModel):
     options: list[str] = Field(default_factory=list)
     best_guess: str | None = None
 
+    @field_validator(
+        "clarified_query",
+        "question",
+        "best_guess",
+        mode="before",
+    )
+    @classmethod
+    def coerce_optional_text(cls, value: Any) -> str | None:
+        if value is None or isinstance(value, str):
+            return value
+        return str(value)
+
     @field_validator("options", mode="before")
     @classmethod
     def normalize_and_cap_options(cls, value: Any) -> list[str]:
@@ -54,8 +66,7 @@ class PlannerOutput(BaseModel):
 class ScorerOutput(BaseModel):
     """Output from the evidence relevance scorer."""
 
-    score: float
-    reason: str = ""
+    score: float = 0.5
 
     @field_validator("score", mode="after")
     @classmethod
@@ -67,8 +78,12 @@ class SubQuestionVerdict(BaseModel):
     """Evaluator verdict for one sub-question."""
 
     id: str
-    verdict: Literal["answered", "partially_answered", "unanswered"]
-    reason: str = ""
+    verdict: Literal[
+        "answered",
+        "partially_answered",
+        "unanswered",
+    ] | None = None
+    reason: str | None = None
 
 
 class EvaluatorOutput(BaseModel):

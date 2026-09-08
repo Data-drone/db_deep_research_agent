@@ -19,6 +19,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_cleanup_tasks: set[asyncio.Task[Any]] = set()
+
 
 class WorkspaceOAuthAuth(httpx.Auth):
     """Refresh Databricks SDK authentication headers for every request."""
@@ -45,6 +47,51 @@ class WorkspaceOAuthAuth(httpx.Auth):
 
         request.headers.update(headers)
         yield request
+
+
+def _log_cleanup_task_result(task: asyncio.Task[Any]) -> None:
+    """Release a cleanup task and log any exception it raised."""
+
+    _cleanup_tasks.discard(task)
+    if task.cancelled():
+        logger.warning(
+            "Model HTTP client cleanup task was cancelled"
+        )
+        return
+
+    try:
+        exception = task.exception()
+    except asyncio.CancelledError:
+        logger.warning(
+            "Model HTTP client cleanup task was cancelled"
+        )
+        return
+
+    if exception is not None:
+        logger.error(
+            "Failed to close model HTTP client during initialization",
+            exc_info=(
+                type(exception),
+                exception,
+                exception.__traceback__,
+            ),
+        )
+
+
+def _close_http_client_after_initialization_failure(
+    client: httpx.AsyncClient,
+) -> None:
+    """Close a partially initialized client in sync or async contexts."""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(client.aclose())
+        return
+
+    task = loop.create_task(client.aclose())
+    _cleanup_tasks.add(task)
+    task.add_done_callback(_log_cleanup_task_result)
 
 
 def _build_server_map(config: Any) -> dict[str, Any]:
@@ -279,13 +326,9 @@ def create_production_app():
         )
         app = create_app()
     except Exception:
-        try:
-            asyncio.run(model_http_client.aclose())
-        except RuntimeError:
-            logger.warning(
-                "Unable to close model HTTP client during initialization",
-                exc_info=True,
-            )
+        _close_http_client_after_initialization_failure(
+            model_http_client
+        )
         raise
 
     app.state.graph = graph
@@ -508,7 +551,7 @@ except Exception:
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ["DATABRICKS_APP_PORT"])
+    port = int(os.environ.get("DATABRICKS_APP_PORT", "8000"))
     uvicorn.run(
         app,
         host="0.0.0.0",
