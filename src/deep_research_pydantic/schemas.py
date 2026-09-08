@@ -60,7 +60,6 @@ class PlannerOutput(BaseModel):
     """Output from the research planner."""
 
     sub_questions: list[PlannedSubQuestion] = Field(default_factory=list)
-    estimated_iterations: int | None = None
 
 
 class ScorerOutput(BaseModel):
@@ -83,7 +82,7 @@ class SubQuestionVerdict(BaseModel):
         "partially_answered",
         "unanswered",
     ] | None = None
-    reason: str | None = None
+    reason: Any = None
 
 
 class EvaluatorOutput(BaseModel):
@@ -98,7 +97,7 @@ class EvaluatorOutput(BaseModel):
     decision: Literal["continue", "stop"] = "stop"
     reason: str = ""
     source_diversity_score: float | None = None
-    single_source_questions: list[str] = Field(default_factory=list)
+    single_source_questions: Any = None
 
 
 class CompressorOutput(BaseModel):

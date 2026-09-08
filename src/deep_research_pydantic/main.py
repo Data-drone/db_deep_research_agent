@@ -113,7 +113,7 @@ def _build_server_map(config: Any) -> dict[str, Any]:
 
 
 def _create_workspace_client(config: Any) -> Any:
-    """Create a Databricks SDK client using explicit OAuth credentials."""
+    """Create a Databricks SDK client using configured credentials."""
 
     from databricks.sdk import WorkspaceClient
 
@@ -121,18 +121,30 @@ def _create_workspace_client(config: Any) -> Any:
 
     client_id = os.environ.get("DATABRICKS_CLIENT_ID", "")
     client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET", "")
-    if not client_id or not client_secret:
-        raise ConfigError(
-            "DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET "
-            "are required for Databricks OAuth authentication"
-        )
+    token = getattr(config, "databricks_token", "") or ""
 
-    try:
-        return WorkspaceClient(
-            host=config.databricks_host,
+    kwargs: dict[str, Any] = {"host": config.databricks_host}
+    if client_id and client_secret:
+        kwargs.update(
             client_id=client_id,
             client_secret=client_secret,
         )
+        logger.info(
+            "Using Databricks OAuth client credentials for authentication"
+        )
+    elif token:
+        kwargs["token"] = token
+        logger.info(
+            "Using DATABRICKS_TOKEN for Databricks authentication"
+        )
+    else:
+        raise ConfigError(
+            "Configure DATABRICKS_TOKEN, or DATABRICKS_CLIENT_ID and "
+            "DATABRICKS_CLIENT_SECRET, for Databricks authentication"
+        )
+
+    try:
+        return WorkspaceClient(**kwargs)
     except Exception as exc:
         raise ConfigError(
             f"Failed to initialize Databricks WorkspaceClient: {exc}"
