@@ -21,9 +21,9 @@ export function ClarificationPrompt({ request, onAnswer, submitting }: Props) {
             {request.question}
           </p>
           <div className="flex flex-wrap gap-2 mb-3">
-            {request.options.map((option) => (
+            {request.options.map((option, idx) => (
               <button
-                key={option}
+                key={`${idx}-${option}`}
                 className="px-3 py-1.5 rounded-lg border border-warm-border bg-warm-bg text-warm-text text-sm transition-all duration-150 hover:border-warm-accent hover:bg-warm-accent/5 hover:shadow-sm disabled:opacity-40"
                 onClick={() => onAnswer(option)}
                 disabled={submitting}

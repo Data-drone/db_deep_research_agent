@@ -3,6 +3,17 @@ import type { Tool, JobStatus } from "./types";
 
 const client = axios.create({ baseURL: "/", timeout: 15000 });
 
+const POLL_INTERVAL_MS = 3000;
+/** Consecutive poll failures tolerated before giving up on a job. */
+const MAX_POLL_FAILURES = 5;
+/** How long to keep polling a job that never reaches a terminal status.
+ *  Past the server's own deadline (a 900 s default time cap plus the reaper's
+ *  grace period), so in normal operation we see the real terminal status first
+ *  and this only catches a job the server has also lost track of. Without it the
+ *  loop polls forever and the composer stays disabled with no way out but
+ *  Cancel. */
+const POLL_DEADLINE_MS = 20 * 60 * 1000;
+
 export async function fetchTools(): Promise<Tool[]> {
   const res = await client.get<Tool[]>("/api/tools");
   return res.data;
@@ -75,12 +86,22 @@ export function streamJob(
     options?: string[];
     best_guess?: string;
     answer?: string;
-    token_usage?: { input: number; output: number; scope: string };
+    token_usage?: { input: number; output: number; scope?: string };
+    unverified_citations?: string[];
+    timeout_seconds?: number;
   }) => void,
   onError: (err: Error) => void
 ): () => void {
   let cancelled = false;
+  let terminal = false;
   let abortController = new AbortController();
+
+  function dispatch(event: Parameters<typeof onEvent>[0]) {
+    if (["completed", "failed", "cancelled"].includes(event.type)) {
+      terminal = true;
+    }
+    onEvent(event);
+  }
 
   async function readStream() {
     try {
@@ -110,10 +131,8 @@ export function streamJob(
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6));
-            onEvent(event);
-            if (["completed", "failed", "cancelled"].includes(event.type)) {
-              return; // Terminal event received
-            }
+            dispatch(event);
+            if (terminal) return;
           } catch {
             // Ignore unparseable lines (keepalives, malformed)
           }
@@ -123,34 +142,92 @@ export function streamJob(
       if (cancelled) return;
       // Stream failed — fall back to polling
       await pollFallback();
+      return;
+    }
+
+    // The stream closed cleanly without a terminal frame (server restart, load
+    // balancer idle timeout, graceful end). That is not an exception, so it
+    // would otherwise leave the UI loading forever with nothing polling.
+    if (!cancelled && !terminal) {
+      await pollFallback();
     }
   }
 
   async function pollFallback() {
+    let failures = 0;
+    // Track the id rather than a boolean: a second prompt raised in the same
+    // poll session would look identical to the first one still being pending,
+    // and would never be dispatched.
+    let shownClarificationId: string | null = null;
+    const deadline = Date.now() + POLL_DEADLINE_MS;
+
     while (!cancelled) {
       try {
         const status = await pollJob(jobId);
-        if (status.current_node) {
-          onEvent({ type: "node_started", node: status.current_node });
+        failures = 0;
+
+        // Recover a clarification the user still needs to answer. The stream is
+        // the normal channel for this, but if it dropped while the backend was
+        // parked waiting, polling is the only way the prompt comes back.
+        if (status.pending_clarification) {
+          const id = status.pending_clarification.clarification_id;
+          if (id !== shownClarificationId) {
+            shownClarificationId = id;
+            dispatch({
+              type: "clarification_needed",
+              clarification_id: id,
+              question: status.pending_clarification.question,
+              options: status.pending_clarification.options,
+            });
+          }
+        } else {
+          if (shownClarificationId !== null) {
+            shownClarificationId = null;
+            dispatch({ type: "clarification_resolved" });
+          }
+          // Only report node progress when no prompt is outstanding — a
+          // node_started clears the clarification prompt in the UI.
+          if (status.current_node) {
+            dispatch({ type: "node_started", node: status.current_node });
+          }
         }
+
         if (status.status === "completed") {
-          onEvent({ type: "completed", result: status.result || "" });
+          dispatch({
+            type: "completed",
+            result: status.result || "",
+            token_usage: status.token_usage,
+            unverified_citations: status.unverified_citations,
+          });
           return;
         }
         if (status.status === "failed") {
-          onEvent({ type: "failed", error: status.error || "Research failed." });
+          dispatch({ type: "failed", error: status.error || "Research failed." });
           return;
         }
         if (status.status === "cancelled") {
-          onEvent({ type: "cancelled" });
+          dispatch({ type: "cancelled" });
           return;
         }
       } catch {
         if (cancelled) return;
-        onError(new Error("Failed to check research status."));
+        failures += 1;
+        // A single 502 from a proxy or a brief blip should not make us abandon
+        // a job that is still running server-side.
+        if (failures >= MAX_POLL_FAILURES) {
+          onError(new Error("Failed to check research status."));
+          return;
+        }
+      }
+
+      if (Date.now() >= deadline) {
+        // The job is not gone — we just stop following it. Saying so is the
+        // honest state; reporting a failure would be a lie, and staying in the
+        // loop leaves the user with a spinner and a disabled composer.
+        dispatch({ type: "abandoned" });
         return;
       }
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
   }
 

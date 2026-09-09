@@ -9,6 +9,7 @@ from typing import Any
 from deep_research.models import CompressedFindings
 from deep_research.prompts import COMPRESSOR_SYSTEM
 from deep_research.state import ResearchState
+from deep_research.token_usage import accumulate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ async def compressor_node(state: ResearchState, *, model: Any) -> dict:
                 open_questions=[],
                 uncertainties=[],
                 contradictions=[],
-            )
+            ),
+            "_token_usage": accumulate_usage(state, response),
         }
 
     return {
@@ -44,5 +46,6 @@ async def compressor_node(state: ResearchState, *, model: Any) -> dict:
             open_questions=result.get("open_questions", []),
             uncertainties=result.get("uncertainties", []),
             contradictions=result.get("contradictions", []),
-        )
+        ),
+        "_token_usage": accumulate_usage(state, response),
     }

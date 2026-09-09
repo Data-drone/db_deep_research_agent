@@ -54,6 +54,8 @@ class ResearchState(TypedDict, total=False):
     compressed_findings: CompressedFindings | None
     final_output: str
     citations: list[Citation]
+    # Markers the synthesizer invented, i.e. cited evidence that does not exist.
+    unverified_citations: list[str]
     verification_result: VerificationResult | None
     verification_attempts: int
 
@@ -109,6 +111,7 @@ def create_initial_state(
         compressed_findings=None,
         final_output="",
         citations=[],
+        unverified_citations=[],
         verification_result=None,
         verification_attempts=0,
         trace_id=trace_id,

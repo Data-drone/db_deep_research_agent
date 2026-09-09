@@ -7,6 +7,7 @@ from typing import Any
 
 from deep_research.prompts import QUERY_ADAPTER_SYSTEM
 from deep_research.state import ResearchState
+from deep_research.token_usage import add_usage, charge, empty_usage
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,9 @@ def _classify_tool(tool_name: str) -> tuple[str, str]:
     return "default", ""
 
 
-async def _reformulate(model: Any, question: str, tool_name: str) -> str:
+async def _reformulate(
+    model: Any, question: str, tool_name: str, usage: dict[str, int]
+) -> str:
     """Reformulate a question for a specific tool type.
 
     For unknown/default tool types, returns the original question unchanged
@@ -65,16 +68,21 @@ async def _reformulate(model: Any, question: str, tool_name: str) -> str:
         {"role": "system", "content": prompt},
         {"role": "user", "content": question},
     ])
+    charge(usage, response)
     return response.content.strip()
 
 
 async def query_adapter_node(state: ResearchState, *, model: Any) -> dict:
     """Reformulate each sub-question for its assigned tools."""
     plan = state.get("research_plan", [])
+    usage = empty_usage()
     for sq in plan:
         if sq.status == "answered":
             continue
         for tool_name in sq.assigned_tools:
-            adapted = await _reformulate(model, sq.question, tool_name)
+            adapted = await _reformulate(model, sq.question, tool_name, usage)
             sq.adapted_queries[tool_name] = adapted
-    return {"research_plan": plan}
+    return {
+        "research_plan": plan,
+        "_token_usage": add_usage(state.get("_token_usage"), usage),
+    }

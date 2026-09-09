@@ -15,9 +15,11 @@ function App() {
   const [viewMode, setViewMode] = useState<"chat" | "report">("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Only an actual report belongs in the Report tab. Taking the last assistant
+  // message put "Research failed…" or a clarification notice there instead.
   const lastAssistantMsg = [...messages]
     .reverse()
-    .find((m) => m.role === "assistant");
+    .find((m) => m.role === "assistant" && m.kind !== "notice");
   const hasReport = outputMode === "report" && lastAssistantMsg;
 
   return (

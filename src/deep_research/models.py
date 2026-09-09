@@ -42,6 +42,9 @@ class Budget:
     max_iterations: int = 5
     max_tool_calls: int = 20
     time_cap_seconds: int = 120
+    # How many times the verifier may send work back to the planner. Each
+    # revision re-runs the research pipeline, so keep this small.
+    max_verification_attempts: int = 1
 
 
 @dataclass

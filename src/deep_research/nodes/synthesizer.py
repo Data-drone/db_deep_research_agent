@@ -5,8 +5,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from deep_research.citations import (
+    build_evidence_index,
+    extract_citations,
+    render_evidence_block,
+)
 from deep_research.prompts import SYNTHESIZER_CHAT_SYSTEM, SYNTHESIZER_REPORT_SYSTEM
 from deep_research.state import ResearchState
+from deep_research.token_usage import (
+    accumulate_usage,
+    add_usage,
+    empty_usage,
+    extract_stream_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +66,12 @@ async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
         if findings.contradictions:
             context_parts.append(f"Contradictions: {', '.join(findings.contradictions)}")
 
-    if evidence:
-        context_parts.append("Evidence (cite using [Source: Tool — description] format):")
-        for e in evidence:
-            tool_label = (e.tool_that_produced_it or "Unknown").replace("]", ")")
-            title_label = (e.title or e.source_id).replace("]", ")")
-            context_parts.append(f"- [Source: {tool_label} — {title_label}] {e.snippet}")
+    # Enumerate evidence so every citation the model writes can be resolved back
+    # to a real item. Free-text citations were unverifiable by construction.
+    evidence_index = build_evidence_index(evidence)
+    if evidence_index:
+        context_parts.append("Evidence — cite by marker, e.g. [E1]:")
+        context_parts.extend(render_evidence_block(evidence_index))
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -70,22 +81,42 @@ async def synthesizer_node(state: ResearchState, *, model: Any) -> dict:
     # Try streaming for token-level output
     if job_manager and job_id and hasattr(model, "astream"):
         chunks = []
-        async for chunk in model.astream(messages):
+        stream_usage = empty_usage()
+        # Providers only attach usage to streamed chunks when asked. astream
+        # takes **kwargs, so an unsupported flag would reach the provider rather
+        # than raise — gate on the model actually declaring the field. Both
+        # implementations we target take it as a named parameter of ``_astream``
+        # and consume it there, so it never reaches the request body:
+        # ``ChatDatabricks`` (which already defaults it True) and ``ChatOpenAI``
+        # (which defaults it False, and is the reason to keep passing it).
+        if hasattr(model, "stream_usage"):
+            stream = model.astream(messages, stream_usage=True)
+        else:
+            stream = model.astream(messages)
+        async for chunk in stream:
             token = chunk.content if hasattr(chunk, "content") else str(chunk)
             if token:
                 chunks.append(token)
                 job_manager.push_event(job_id, {"type": "token", "content": token})
+            # Chunk usage is read via the additive ``usage_metadata`` field only —
+            # see extract_stream_usage for why response_metadata is unsafe to sum.
+            stream_usage = add_usage(stream_usage, extract_stream_usage(chunk))
         final_output = "".join(chunks)
-        token_usage = state.get("_token_usage", {"input": 0, "output": 0})
+        token_usage = add_usage(state.get("_token_usage"), stream_usage)
     else:
         response = await model.ainvoke(messages)
         final_output = response.content
-        meta = getattr(response, "response_metadata", {}) or {}
-        usage = meta.get("usage", {})
-        prior = state.get("_token_usage", {"input": 0, "output": 0})
-        token_usage = {
-            "input": prior["input"] + int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
-            "output": prior["output"] + int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
-        }
+        token_usage = accumulate_usage(state, response)
 
-    return {"final_output": final_output, "_token_usage": token_usage}
+    final_output, citations, unverified = extract_citations(final_output, evidence_index)
+    if unverified:
+        logger.warning(
+            "Dropped %d fabricated citation(s) from the synthesized output", len(unverified)
+        )
+
+    return {
+        "final_output": final_output,
+        "citations": citations,
+        "unverified_citations": sorted(set(unverified)),
+        "_token_usage": token_usage,
+    }

@@ -8,6 +8,7 @@ from typing import Any
 
 from deep_research.prompts import CLARIFIER_SYSTEM
 from deep_research.state import ResearchState
+from deep_research.token_usage import accumulate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,10 @@ async def clarifier_node(state: ResearchState, *, model: Any) -> dict:
     try:
         result = json.loads(content)
     except (json.JSONDecodeError, AttributeError):
-        return {"clarified_query": state["user_query"]}
+        return {
+            "clarified_query": state["user_query"],
+            "_token_usage": accumulate_usage(state, response),
+        }
 
     if result.get("needs_clarification"):
         options = result.get("options")
@@ -60,6 +64,10 @@ async def clarifier_node(state: ResearchState, *, model: Any) -> dict:
             "needs_clarification": True,
             "clarification_question": str(result.get("question", "Could you clarify your question?")),
             "clarification_options": options,
+            "_token_usage": accumulate_usage(state, response),
         }
 
-    return {"clarified_query": result.get("clarified_query", state["user_query"])}
+    return {
+        "clarified_query": result.get("clarified_query", state["user_query"]),
+        "_token_usage": accumulate_usage(state, response),
+    }

@@ -5,6 +5,10 @@ import { TypingIndicator } from "./TypingIndicator";
 import { ClarificationPrompt } from "./ClarificationPrompt";
 import type { Message, JobStatus, OutputMode, ResponseMode, ClarificationRequest } from "../types";
 
+/** Treat the reader as "at the bottom" within this many pixels, so a smooth
+ *  scroll still in flight does not read as having scrolled away. */
+const BOTTOM_THRESHOLD_PX = 120;
+
 interface Props {
   messages: Message[];
   currentJob: JobStatus | null;
@@ -44,8 +48,27 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const wasAtBottomRef = useRef(true);
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    wasAtBottomRef.current =
+      container.scrollHeight - container.scrollTop - container.clientHeight <= BOTTOM_THRESHOLD_PX;
+  }, []);
 
   useEffect(() => {
+    // Only follow the tail if the user was already at the bottom. Otherwise
+    // every streamed token (and every 3s poll tick) yanks them back down and
+    // they cannot read what scrolled past.
+    //
+    // The decision has to come from a scroll handler, not from measuring here:
+    // this effect runs after the commit that grew the content, so replacing the
+    // streaming stub with a multi-screen report puts the reader hundreds of
+    // pixels from the new bottom and the check would conclude they had scrolled
+    // away when they had not moved at all.
+    if (!wasAtBottomRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentJob]);
 
@@ -80,7 +103,7 @@ export function ChatPanel({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto flex flex-col gap-4">
           {messages.length === 0 && (
             <div className="text-center mt-24 animate-fade-in">
@@ -109,6 +132,7 @@ export function ChatPanel({
           ))}
           {clarificationRequest && (
             <ClarificationPrompt
+              key={clarificationRequest.clarificationId}
               request={clarificationRequest}
               onAnswer={onAnswerClarification}
               submitting={clarificationSubmitting}

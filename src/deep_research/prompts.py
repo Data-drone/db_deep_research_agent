@@ -119,7 +119,8 @@ SYNTHESIZER_CHAT_SYSTEM = """You are a research synthesizer. Given compressed fi
 - Lead with the direct answer
 - Support with evidence
 - Note uncertainties and limitations
-- Cite sources inline using [Source: Tool — description] format, where Tool is the tool display name and description identifies the specific data (e.g. [Source: Genie — quarterly_revenue table] or [Source: Knowledge Assistant — ANZ FY2024 Annual Report])
+- Cite evidence inline by its marker, exactly as given: [E1], [E2], ... Use several markers if several items support the claim (e.g. "revenue grew 12% [E1] [E4]")
+- Only ever cite a marker that appears in the evidence list. Never invent a marker, and never write a citation in any other format — any citation that does not resolve to a listed marker is replaced with [unverified] in the delivered output and reported to the reader
 - Every factual claim must have at least one citation
 - Place citations immediately after the claim they support"""
 
@@ -131,9 +132,12 @@ Report structure:
 3. Detailed Analysis (organized by sub-topic)
 4. Limitations & Uncertainties
 5. What Would Change This Conclusion
-6. Sources
+6. Sources — list only the markers you cited, one per line, as [E1]. Do not name,
+   describe or summarise a source in your own words: a source you describe cannot
+   be checked, and an invented one reads exactly like a real one.
 
-Use [Source: Tool — description] format for inline citations, where Tool is the tool display name and description identifies the data (e.g. [Source: Genie — quarterly_revenue table] or [Source: Knowledge Assistant — ANZ FY2024 Annual Report]).
+Cite evidence inline by its marker, exactly as given: [E1], [E2], ... Use several markers if several items support the claim (e.g. "revenue grew 12% [E1] [E4]").
+Only ever cite a marker that appears in the evidence list. Never invent a marker, and never write a citation in any other format — any citation that does not resolve to a listed marker is replaced with [unverified] in the delivered output and reported to the reader.
 Every factual claim must have at least one citation. Be thorough but concise."""
 
 VERIFIER_SYSTEM = """You are a citation verifier. Given a draft response and a list of evidence items, check that:

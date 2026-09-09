@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager, suppress
 import json
 import logging
 import uuid
@@ -14,9 +15,15 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.responses import StreamingResponse
 
 from deep_research.api.clarification import InMemoryClarificationStore
-from deep_research.api.jobs import JobManager, JobStatus
+from deep_research.api.jobs import (
+    STALL_GRACE_SECONDS,
+    TERMINAL_STATES,
+    JobManager,
+    JobStatus,
+)
 from deep_research.session import SessionManager
 from deep_research.state import create_initial_state
+from deep_research.token_usage import add_usage, extract_usage
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +72,21 @@ async def _run_graph(
 
     async with trace_research(job_id, query, tools, output_mode, mode="research") as trace_ctx:
         try:
+            if job_manager.is_cancelled(job_id):
+                trace_ctx["status"] = "cancelled"
+                return
             job_manager.update_state(job_id, "running")
 
             # Inject job context so nodes (e.g. synthesizer) can push token events
             initial_state["_job_manager"] = job_manager
             initial_state["_job_id"] = job_id
+
+            # LangGraph counts supersteps, and a research iteration is several
+            # nodes; a verifier revision replays the whole loop. A fixed 50 was
+            # close enough to the worst case at the default budget that raising
+            # max_iterations would blow up with GraphRecursionError minutes into
+            # a run, so derive it instead.
+            recursion_limit = _recursion_limit(initial_state.get("budget"))
 
             # Try streaming for node-level progress tracking
             if hasattr(graph, "astream"):
@@ -77,8 +94,12 @@ async def _run_graph(
                 async for event in graph.astream(
                     initial_state,
                     stream_mode="updates",
-                    config={"recursion_limit": 50},
+                    config={"recursion_limit": recursion_limit},
                 ):
+                    if job_manager.is_cancelled(job_id):
+                        logger.info(f"Job {job_id}: cancelled mid-graph, stopping")
+                        trace_ctx["status"] = "cancelled"
+                        return
                     for node_name in event:
                         logger.info(f"Job {job_id}: completed node '{node_name}'")
                         job_manager.update_state(
@@ -106,10 +127,21 @@ async def _run_graph(
 
             job_manager.update_state(job_id, "completed", result=final_output)
             completed_event: dict[str, Any] = {"type": "completed", "result": final_output}
+            # Surface fabricated citations rather than only logging them — the
+            # reader should know the model cited evidence that does not exist.
+            unverified = final_state.get("unverified_citations") or []
+            if unverified:
+                completed_event["unverified_citations"] = unverified
+                job_manager.get_status(job_id).unverified_citations = list(unverified)
+            # Every LLM-calling node charges into _token_usage, so this covers
+            # the whole run. Say "unavailable" rather than omitting the field:
+            # a provider that reports no usage is not the same as zero cost.
             if token_usage and (token_usage.get("input", 0) > 0 or token_usage.get("output", 0) > 0):
-                completed_event["token_usage"] = {**token_usage, "scope": "answer"}
+                completed_event["token_usage"] = {**token_usage, "scope": "job"}
                 status = job_manager.get_status(job_id)
-                status.token_usage = token_usage
+                status.token_usage = completed_event["token_usage"]
+            else:
+                completed_event["token_usage"] = {"input": 0, "output": 0, "scope": "unavailable"}
             job_manager.push_event(job_id, completed_event)
             trace_ctx["output"] = final_output
             trace_ctx["status"] = "completed"
@@ -124,6 +156,12 @@ async def _run_graph(
                 if tool_calls:
                     session_manager.add_tool_calls(session_id, tool_calls)
 
+        except asyncio.CancelledError:
+            logger.info(f"Job {job_id}: graph execution cancelled")
+            job_manager.update_state(job_id, "cancelled")
+            job_manager.push_event(job_id, {"type": "cancelled"})
+            trace_ctx["status"] = "cancelled"
+            raise
         except Exception as exc:
             logger.exception(f"Graph execution failed for job {job_id}")
             job_manager.update_state(
@@ -210,6 +248,8 @@ async def _run_quick_reply(
             completed_event: dict[str, Any] = {"type": "completed", "result": reply}
             if token_usage and (token_usage["input"] > 0 or token_usage["output"] > 0):
                 completed_event["token_usage"] = {**token_usage, "scope": "answer"}
+            else:
+                completed_event["token_usage"] = {"input": 0, "output": 0, "scope": "unavailable"}
             job_manager.push_event(job_id, completed_event)
             trace_ctx["output"] = reply
             trace_ctx["status"] = "completed"
@@ -217,6 +257,14 @@ async def _run_quick_reply(
             # 6. Update session
             session_manager.add_turn(session_id, "assistant", reply)
 
+        except asyncio.CancelledError:
+            # CancelledError is a BaseException, so the handler below never saw
+            # it and the trace was left recording a run that is still in flight.
+            logger.info(f"Job {job_id}: quick reply cancelled")
+            job_manager.update_state(job_id, "cancelled")
+            job_manager.push_event(job_id, {"type": "cancelled"})
+            trace_ctx["status"] = "cancelled"
+            raise
         except Exception as exc:
             logger.exception(f"Quick reply failed for job {job_id}")
             job_manager.update_state(
@@ -228,18 +276,48 @@ async def _run_quick_reply(
 
 
 def _extract_token_usage(response: Any) -> dict[str, int]:
-    """Extract token usage from an LLM response's metadata."""
-    meta = getattr(response, "response_metadata", {}) or {}
-    usage = (
-        meta.get("usage")
-        or meta.get("token_usage")
-        or getattr(response, "usage_metadata", None)
-        or {}
-    )
-    return {
-        "input": int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
-        "output": int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
+    """Extract token usage from an LLM response's metadata.
+
+    Thin alias kept for the existing call sites and tests; the implementation
+    is shared with the graph nodes so the two paths cannot drift apart.
+    """
+    return extract_usage(response)
+
+
+def _terminal_event(status: Any) -> dict[str, Any]:
+    """Build the SSE frame for a job that is already in a terminal state.
+
+    Used by the late-connect and keepalive paths so a client that reconnects
+    after the fact sees the same payload a live client saw, token usage included.
+    """
+    event: dict[str, Any] = {
+        "type": status.state,
+        "result": status.result,
+        "error": status.error,
     }
+    if status.token_usage:
+        event["token_usage"] = status.token_usage
+    if status.unverified_citations:
+        event["unverified_citations"] = status.unverified_citations
+    return event
+
+
+def _recursion_limit(budget: Any) -> int:
+    """A superstep budget that scales with the configured research budget.
+
+    Each research iteration is roughly six nodes and a verifier revision replays
+    the whole loop, so the cost is (iterations x revisions) rather than additive.
+    Padded, and floored at the previous fixed value so this can only ever raise
+    the ceiling.
+    """
+    iterations = int(getattr(budget, "max_iterations", 5) or 5)
+    revisions = int(getattr(budget, "max_verification_attempts", 1) or 1)
+    return max(50, (iterations * (revisions + 1) * 8) + 20)
+
+
+#: How long to wait for a human to answer a clarifying question. The old value
+#: was 30s, which is shorter than it takes to read three options and type.
+DEFAULT_CLARIFICATION_TIMEOUT = 180.0
 
 
 async def _run_research_with_clarification(
@@ -251,16 +329,32 @@ async def _run_research_with_clarification(
     initial_state: dict,
     session_manager: SessionManager,
     session_id: str,
+    clarification_timeout: float = DEFAULT_CLARIFICATION_TIMEOUT,
 ) -> None:
     """Run clarifier pre-graph, handle clarification if needed, then run full graph."""
     from deep_research.nodes.clarifier import clarifier_node
 
     try:
+        if job_manager.is_cancelled(job_id):
+            return
         job_manager.update_state(job_id, "running", current_node="clarifier")
         job_manager.push_event(job_id, {"type": "node_started", "node": "clarifier"})
 
         # Run clarifier standalone (pre-graph)
         clarifier_result = await clarifier_node(initial_state, model=model)
+
+        # The clarifier runs outside the graph, so its usage does not reach
+        # _token_usage the way every in-graph node's does. Fold it in here or the
+        # run's total silently excludes an LLM call the user paid for.
+        initial_state["_token_usage"] = add_usage(
+            initial_state.get("_token_usage"), clarifier_result.get("_token_usage")
+        )
+
+        # The clarifier is a multi-second LLM call; a cancel arriving during it
+        # must not go on to raise a clarification prompt for a dead job.
+        if job_manager.is_cancelled(job_id):
+            job_manager.push_event(job_id, {"type": "cancelled"})
+            return
 
         if clarifier_result.get("needs_clarification"):
             question = clarifier_result.get("clarification_question", "")
@@ -276,10 +370,13 @@ async def _run_research_with_clarification(
                 "clarification_id": clr_state.clarification_id,
                 "question": question,
                 "options": options,
+                "timeout_seconds": clarification_timeout,
             })
 
             # Wait for user answer using the store's wait method
-            result_state = await clarification_store.wait_for_resolution(job_id, timeout=30.0)
+            result_state = await clarification_store.wait_for_resolution(
+                job_id, timeout=clarification_timeout
+            )
 
             if result_state and result_state.status == "answered" and result_state.answer:
                 initial_state["clarified_query"] = result_state.answer
@@ -304,6 +401,12 @@ async def _run_research_with_clarification(
                 "clarified_query", initial_state["user_query"]
             )
 
+        # A cancel may have landed while we were waiting or answering
+        if job_manager.is_cancelled(job_id):
+            clarification_store.cleanup(job_id)
+            job_manager.push_event(job_id, {"type": "cancelled"})
+            return
+
         # Ensure graph's clarifier short-circuits
         initial_state["needs_clarification"] = False
 
@@ -317,6 +420,12 @@ async def _run_research_with_clarification(
         # Cleanup clarification state after job completion
         clarification_store.cleanup(job_id)
 
+    except asyncio.CancelledError:
+        logger.info(f"Job {job_id}: cancelled during clarification flow")
+        job_manager.update_state(job_id, "cancelled")
+        job_manager.push_event(job_id, {"type": "cancelled"})
+        clarification_store.cleanup(job_id)
+        raise
     except Exception as exc:
         logger.exception(f"Research with clarification failed for job {job_id}")
         job_manager.update_state(
@@ -327,7 +436,40 @@ async def _run_research_with_clarification(
 
 
 def create_app(use_mocks: bool = False) -> FastAPI:
-    app = FastAPI(title="Deep Research Agent", version="0.1.0")
+    job_manager = JobManager()
+    session_manager = SessionManager()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """Run a background reaper so job and session state cannot grow forever."""
+        cfg = getattr(app.state, "config", None)
+        ttl = int(getattr(cfg, "job_ttl_seconds", 900) or 900) if cfg else 900
+        time_cap = int(getattr(cfg, "time_cap_seconds", 600) or 600) if cfg else 600
+        stall_after = time_cap + STALL_GRACE_SECONDS
+        interval = max(30, min(ttl, 300))
+
+        async def reap() -> None:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    # Order matters: stall the wedged jobs first so they become
+                    # terminal, then let the TTL pass collect whatever is due.
+                    job_manager.sweep_stalled(stall_after)
+                    job_manager.sweep_terminal(ttl)
+                    session_manager.cleanup_expired()
+                except Exception:
+                    logger.exception("Reaper pass failed")
+
+        reaper = asyncio.create_task(reap())
+        app.state.reaper_task = reaper
+        try:
+            yield
+        finally:
+            reaper.cancel()
+            with suppress(asyncio.CancelledError):
+                await reaper
+
+    app = FastAPI(title="Deep Research Agent", version="0.1.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -336,9 +478,14 @@ def create_app(use_mocks: bool = False) -> FastAPI:
         allow_headers=["*"],
     )
 
-    job_manager = JobManager()
-    session_manager = SessionManager()
     clarification_store = InMemoryClarificationStore()
+
+    # Both stores are closures over this app instance anyway; publishing them on
+    # ``app.state`` is what the rest of the codebase already does for the graph
+    # and model, and it lets a test inspect the same objects the handlers use.
+    app.state.job_manager = job_manager
+    app.state.session_manager = session_manager
+    app.state.clarification_store = clarification_store
 
     @app.get("/health")
     async def health():
@@ -388,7 +535,7 @@ def create_app(use_mocks: bool = False) -> FastAPI:
                 return {"job_id": job_id, "status": "failed", "session_id": session.session_id}
 
             mcp_manager = getattr(request.app.state, "mcp_manager", None)
-            asyncio.create_task(
+            task = asyncio.create_task(
                 _run_quick_reply(
                     model=model,
                     mcp_manager=mcp_manager,
@@ -401,12 +548,23 @@ def create_app(use_mocks: bool = False) -> FastAPI:
                     conversation_history=prior_history,
                 )
             )
+            job_manager.register_task(job_id, task)
         else:
             # Deep research path: full graph pipeline
             graph = getattr(request.app.state, "graph", None)
             if graph is None:
                 job_manager.update_state(
                     job_id, "failed", error="Research graph not initialized"
+                )
+                return {"job_id": job_id, "status": "failed", "session_id": session.session_id}
+
+            # Same fast-fail the quick path gets. Without it the clarifier is the
+            # first thing to touch the model, and the user gets a job that fails
+            # a few seconds later with 'NoneType has no attribute ainvoke'.
+            model = getattr(request.app.state, "model", None)
+            if model is None:
+                job_manager.update_state(
+                    job_id, "failed", error="LLM model not initialized"
                 )
                 return {"job_id": job_id, "status": "failed", "session_id": session.session_id}
 
@@ -418,6 +576,7 @@ def create_app(use_mocks: bool = False) -> FastAPI:
                     max_iterations=config.max_iterations,
                     max_tool_calls=config.max_tool_calls,
                     time_cap_seconds=config.time_cap_seconds,
+                    max_verification_attempts=config.max_verification_attempts,
                 )
 
             initial_state = create_initial_state(
@@ -431,9 +590,9 @@ def create_app(use_mocks: bool = False) -> FastAPI:
                 prior_evidence=prior_evidence,
             )
 
-            asyncio.create_task(
+            task = asyncio.create_task(
                 _run_research_with_clarification(
-                    model=getattr(request.app.state, "model", None),
+                    model=model,
                     graph=graph,
                     clarification_store=clarification_store,
                     job_manager=job_manager,
@@ -441,8 +600,13 @@ def create_app(use_mocks: bool = False) -> FastAPI:
                     initial_state=initial_state,
                     session_manager=session_manager,
                     session_id=session.session_id,
+                    clarification_timeout=float(
+                        getattr(config, "clarification_timeout_seconds", DEFAULT_CLARIFICATION_TIMEOUT)
+                        if config else DEFAULT_CLARIFICATION_TIMEOUT
+                    ),
                 )
             )
+            job_manager.register_task(job_id, task)
 
         return {
             "job_id": job_id,
@@ -463,6 +627,8 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             "result": status.result,
             "current_node": status.current_node,
             "error": status.error,
+            "token_usage": status.token_usage,
+            "unverified_citations": status.unverified_citations,
         }
         clr_state = clarification_store.get(job_id)
         if clr_state and clr_state.status == "pending":
@@ -484,8 +650,21 @@ def create_app(use_mocks: bool = False) -> FastAPI:
             # Check terminal state FIRST (handles late-connect case)
             status = job_manager.get_status(job_id)
             if status.state in ("completed", "failed", "cancelled"):
-                yield f"data: {json.dumps({'type': status.state, 'result': status.result, 'error': status.error})}\n\n"
+                yield f"data: {json.dumps(_terminal_event(status))}\n\n"
                 return
+
+            # A reconnecting client attaches to a queue whose events were
+            # already consumed by the connection that died, so a clarification
+            # raised before the drop would never be seen and the run would sit
+            # parked for the full timeout. Replay it from the store.
+            clr_state = clarification_store.get(job_id)
+            if clr_state and clr_state.status == "pending":
+                yield "data: " + json.dumps({
+                    "type": "clarification_needed",
+                    "clarification_id": clr_state.clarification_id,
+                    "question": clr_state.question,
+                    "options": clr_state.options,
+                }) + "\n\n"
 
             queue = job_manager.get_event_queue(job_id)
             while True:
@@ -500,7 +679,7 @@ def create_app(use_mocks: bool = False) -> FastAPI:
                     # Check if job terminated externally
                     status = job_manager.get_status(job_id)
                     if status.state in ("completed", "failed", "cancelled"):
-                        yield f"data: {json.dumps({'type': status.state, 'result': status.result, 'error': status.error})}\n\n"
+                        yield f"data: {json.dumps(_terminal_event(status))}\n\n"
                         break
 
         return StreamingResponse(
@@ -515,12 +694,19 @@ def create_app(use_mocks: bool = False) -> FastAPI:
     @app.delete("/api/research/{job_id}")
     async def cancel_research(job_id: str):
         try:
+            was_terminal = job_manager.get_status(job_id).state in TERMINAL_STATES
             job_manager.cancel_job(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Job not found")
-        # Wake any waiting clarification
-        clarification_store.mark_cancelled(job_id)
-        return {"job_id": job_id, "status": "cancelled"}
+        # Wake any waiting clarification, and tell the stream right away rather
+        # than letting the UI find out on the next 30s keepalive. A job that had
+        # already finished is left alone: cancel_job is a no-op on it, so
+        # reporting "cancelled" and pushing the event would tell the client its
+        # completed result had been thrown away.
+        if not was_terminal:
+            clarification_store.mark_cancelled(job_id)
+            job_manager.push_event(job_id, {"type": "cancelled"})
+        return {"job_id": job_id, "status": job_manager.get_status(job_id).state}
 
     @app.post("/api/research/{job_id}/clarify")
     async def submit_clarification(job_id: str, req: ClarifyRequest):

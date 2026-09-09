@@ -54,8 +54,15 @@ function parseSections(content: string): Section[] {
   const sections: Section[] = [];
   let currentTitle = "";
   let currentBody: string[] = [];
+  // Headings inside a fenced block are not headings — shell/Python/SQL comments
+  // start with '#'. Splitting on them tears the fence in half, so everything
+  // after the split renders as one unterminated code block.
+  let inFence = false;
   for (const line of lines) {
-    const headingMatch = line.match(/^#{1,3}\s+(.+)$/);
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+    }
+    const headingMatch = inFence ? null : line.match(/^#{1,3}\s+(.+)$/);
     if (headingMatch) {
       if (currentTitle) sections.push({ title: currentTitle, body: currentBody.join("\n") });
       currentTitle = headingMatch[1];

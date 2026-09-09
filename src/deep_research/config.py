@@ -32,6 +32,9 @@ class AppConfig:
     max_iterations: int = 5
     max_tool_calls: int = 20
     time_cap_seconds: int = 120
+    max_verification_attempts: int = 1
+    clarification_timeout_seconds: int = 180
+    job_ttl_seconds: int = 900
     managed_servers: tuple[MCPServerConfig, ...] = ()
     custom_servers: tuple[MCPServerConfig, ...] = ()
 
@@ -111,6 +114,9 @@ def load_app_config(mcp_config_path: Path | None = None) -> AppConfig:
         max_iterations=int(os.environ.get("MAX_ITERATIONS", "2")),
         max_tool_calls=int(os.environ.get("MAX_TOOL_CALLS", "20")),
         time_cap_seconds=int(os.environ.get("TIME_CAP_SECONDS", "120")),
+        max_verification_attempts=int(os.environ.get("MAX_VERIFICATION_ATTEMPTS", "1")),
+        clarification_timeout_seconds=int(os.environ.get("CLARIFICATION_TIMEOUT_SECONDS", "180")),
+        job_ttl_seconds=int(os.environ.get("JOB_TTL_SECONDS", "900")),
         managed_servers=managed,
         custom_servers=custom,
     )

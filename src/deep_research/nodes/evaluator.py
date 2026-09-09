@@ -9,6 +9,7 @@ from typing import Any
 from deep_research.models import EvaluatorDecision
 from deep_research.prompts import EVALUATOR_SYSTEM_V2
 from deep_research.state import ResearchState
+from deep_research.token_usage import accumulate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
                 decision="stop", reason="Failed to parse evaluator response — stopping",
             ),
             "sufficiency_score": 0.5,
+            "_token_usage": accumulate_usage(state, response),
         }
 
     budget_exhausted = iteration >= max_iter
@@ -121,4 +123,5 @@ async def evaluator_node(state: ResearchState, *, model: Any) -> dict:
         "sufficiency_score": evaluator_decision.sufficiency_score,
         "missing_facets": evaluator_decision.missing_facets,
         "research_plan": plan,
+        "_token_usage": accumulate_usage(state, response),
     }

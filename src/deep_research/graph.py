@@ -40,19 +40,43 @@ def _should_continue(state: ResearchState) -> str:
 
 
 def _should_revise(state: ResearchState) -> str:
-    """Routing function after verifier: always finish.
+    """Routing function after verifier: re-research unsupported claims, or finish.
 
-    The verifier→planner re-research loop is disabled because it re-runs
-    the entire 7-node pipeline (including Genie polling), adding 60-90s
-    per loop. Unsupported claims are logged but not re-researched.
+    A revision re-runs the whole research pipeline (including Genie polling),
+    which costs 60-90s, so the number of revisions is capped by
+    ``Budget.max_verification_attempts`` (default 1). Beyond the cap, unsupported
+    claims are logged and the draft ships as-is rather than looping indefinitely.
+
+    ``verification_attempts`` counts verifier *passes*, and the first pass is not
+    a revision - it is the initial check that decides whether one is needed. So
+    the number of revisions already sent back to the planner is one less than the
+    pass count, and comparing the raw pass count against the cap would end the
+    run before any revision happened.
     """
     vr = state.get("verification_result")
-    if vr and not vr.all_claims_supported:
+    if not vr or vr.all_claims_supported:
+        return END
+
+    budget = state.get("budget")
+    max_revisions = getattr(budget, "max_verification_attempts", 1) if budget else 1
+    passes = state.get("verification_attempts", 0)
+    revisions_done = max(passes - 1, 0)
+
+    if revisions_done >= max_revisions:
         logger.info(
-            "Verifier found unsupported claims: %s — skipping re-research",
+            "Verifier found unsupported claims after %d revision(s): %s - shipping as-is",
+            revisions_done,
             vr.unsupported_claims[:3],
         )
-    return END
+        return END
+
+    logger.info(
+        "Verifier found unsupported claims (revision %d/%d): %s - re-researching",
+        revisions_done + 1,
+        max_revisions,
+        vr.unsupported_claims[:3],
+    )
+    return "planner"
 
 
 def build_research_graph(
@@ -95,6 +119,9 @@ def build_research_graph(
     })
     graph.add_edge("compressor", "synthesizer")
     graph.add_edge("synthesizer", "verifier")
-    graph.add_edge("verifier", END)
+    graph.add_conditional_edges("verifier", _should_revise, {
+        "planner": "planner",
+        END: END,
+    })
 
     return graph.compile()

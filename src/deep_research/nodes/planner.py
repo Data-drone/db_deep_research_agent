@@ -16,6 +16,7 @@ from typing import Any
 from deep_research.models import SubQuestion
 from deep_research.prompts import PERSPECTIVE_SYSTEM, PLANNER_SYSTEM
 from deep_research.state import ResearchState
+from deep_research.token_usage import add_usage, charge, empty_usage
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +45,15 @@ def _merge_plans(
     return merged
 
 
-async def _generate_perspectives(model: Any, query: str) -> list[str]:
+async def _generate_perspectives(
+    model: Any, query: str, usage: dict[str, int]
+) -> list[str]:
     """Generate 2-3 research perspectives for the query using the critic model."""
     response = await model.ainvoke([
         {"role": "system", "content": PERSPECTIVE_SYSTEM},
         {"role": "user", "content": query},
     ])
+    charge(usage, response)
     try:
         result = json.loads(response.content)
         perspectives = result.get("perspectives", [])
@@ -98,6 +102,7 @@ async def planner_node(
     """
     query = state.get("clarified_query") or state["user_query"]
     tools = state.get("selected_tools", [])
+    usage = empty_usage()
     iteration = state.get("iteration_count", 0)
     existing_plan = state.get("research_plan", [])
     missing_facets = state.get("missing_facets", [])
@@ -107,7 +112,7 @@ async def planner_node(
     # On first invocation, generate perspectives
     perspectives = existing_perspectives
     if not existing_plan and not perspectives:
-        perspectives = await _generate_perspectives(critic_model or model, query)
+        perspectives = await _generate_perspectives(critic_model or model, query, usage)
 
     # Summarize prior evidence from previous session turns
     prior_evidence = state.get("prior_evidence", [])
@@ -167,6 +172,7 @@ async def planner_node(
         {"role": "system", "content": prompt},
         {"role": "user", "content": user_content},
     ])
+    charge(usage, response)
 
     try:
         result = json.loads(response.content)
@@ -182,8 +188,13 @@ async def planner_node(
                     )
                 ],
                 "perspectives": perspectives,
+                "_token_usage": add_usage(state.get("_token_usage"), usage),
             }
-        return {"research_plan": existing_plan, "perspectives": perspectives}
+        return {
+            "research_plan": existing_plan,
+            "perspectives": perspectives,
+            "_token_usage": add_usage(state.get("_token_usage"), usage),
+        }
 
     allowed_tools = set(tools)
     new_sub_questions = []
@@ -207,4 +218,8 @@ async def planner_node(
         )
 
     merged = _merge_plans(existing_plan, new_sub_questions)
-    return {"research_plan": merged, "perspectives": perspectives}
+    return {
+        "research_plan": merged,
+        "perspectives": perspectives,
+        "_token_usage": add_usage(state.get("_token_usage"), usage),
+    }
